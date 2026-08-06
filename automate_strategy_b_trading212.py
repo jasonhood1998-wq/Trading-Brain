@@ -631,21 +631,31 @@ def main():
     ]
 
     if args.daemon:
-        print("[DAEMON MODE] Starting continuous 5-minute trading engine...")
+        print("[DAEMON MODE] Starting continuous trading engine...")
+        print("  --> Exit Manager: High-Frequency 10-Second Monitor Active")
+        print("  --> Buy Scanner: 5-Minute Candle Scan Active")
         import schedule
         
-        def job():
+        # 1. High-Frequency Exit Monitoring (Runs every 10 seconds)
+        schedule.every(10).seconds.do(lambda: manage_open_position_exits(dry_run=args.dry_run))
+
+        # 2. Strategy Buy Signal Scanning (Runs every 5 minutes)
+        def buy_scan_job():
             if is_market_open():
                 run_strategy_b_scan(watchlist, dry_run=args.dry_run)
             else:
-                print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Market closed. Skipping scan.")
+                print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Market closed. Skipping buy scan.")
 
-        schedule.every(5).minutes.do(job)
-        job()  # Run initial scan immediately
+        schedule.every(5).minutes.do(buy_scan_job)
+        
+        # Run initial exit check and buy scan immediately
+        manage_open_position_exits(dry_run=args.dry_run)
+        if is_market_open():
+            run_strategy_b_scan(watchlist, dry_run=args.dry_run)
 
         while True:
             schedule.run_pending()
-            time.sleep(10)
+            time.sleep(1)
     else:
         # Single run mode
         if is_market_open():
