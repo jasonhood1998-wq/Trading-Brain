@@ -368,6 +368,7 @@ def calculate_constrained_position_size(
 
     # 5. Final validation checks
     if final_shares < min_trade_size:
+        print(f"   [SIZING REJECT] Calculated shares ({final_shares}) < minimum required trade size ({min_trade_size})")
         return 0.0
 
     total_cost_gbp = final_shares * entry_price_gbp
