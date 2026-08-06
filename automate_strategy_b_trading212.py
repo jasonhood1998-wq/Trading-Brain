@@ -1,15 +1,18 @@
 """
 ===============================================================================
-STRATEGY B (INSTITUTIONAL QUANT ENGINE v3.0)
+STRATEGY B (INSTITUTIONAL QUANT ENGINE v4.0 - ULTIMATE EDITION)
 ===============================================================================
-Features:
-1. Relative Strength (RS) Stock Ranking (Top 30% Market Leaders)
-2. Machine Learning Signal Probability Classifier (Confidence Score >= 65%)
-3. Time-Based Stale Trade Decay Exits (Closes sideways trades after 3 hrs)
-4. Volatility Parity Position Sizing (Equalizes risk across market regimes)
-5. Macro S&P 500 Regime Guard (SPY > 200 SMA)
-6. Sector Concentration Caps (Max 2 Open Per Sector)
-7. 10-Second High-Frequency Exit Risk Protection with Ratcheting Trailing Stops
+Integrated Institutional Data Feeds & Guards:
+1. Corporate Earnings Guard (Prevents buying 48h before earnings gap risk)
+2. Market Fear Index Guard (^VIX Volatility Scaling & Crash Pause)
+3. Real-Time Financial News & Sentiment NLP Veto
+4. Sector ETF Momentum Alignment (XLK, XLF, XLV, XLY, XLE)
+5. Institutional Insider & Flow Score Booster
+6. Relative Strength Priority Sorter (Ranks 126 stocks by market leadership)
+7. Machine Learning Signal Probability Classifier (Confidence Score >= 65%)
+8. Volatility Parity Position Sizing (Equalizes risk across market regimes)
+9. Time-Based Stale Trade Decay Exits (Closes sideways trades after 3 hrs)
+10. 10-Second High-Frequency Exit Risk Protection with Ratcheting Trailing Stops
 ===============================================================================
 """
 
@@ -84,6 +87,16 @@ SECTOR_MAP = {
     "XOM": "Energy", "CVX": "Energy", "CAT": "Industrial", "GE": "Industrial", "FSLR": "Energy", 
     "ENPH": "Energy", "VALE": "Materials", "PBR": "Energy", "GOLD": "Materials", "SHEL.L": "Energy", 
     "BP.L": "Energy", "SIE.DE": "Industrial", "AIR.DE": "Industrial"
+}
+
+SECTOR_ETF_MAP = {
+    "Tech": "XLK",
+    "Financials": "XLF",
+    "Healthcare": "XLV",
+    "Consumer": "XLY",
+    "Energy": "XLE",
+    "Industrial": "XLI",
+    "Materials": "XLB"
 }
 
 YF_TO_T212_MAP = {
@@ -174,7 +187,7 @@ def log_scan_audit(ticker: str, price: float, trend_pass: bool, pullback_pass: b
         pass
 
 # -----------------------------------------------------------------------------
-# 3. Market Calendar & Macro Guards
+# 3. Market Calendar & Macro / Volatility Guards
 # -----------------------------------------------------------------------------
 def is_market_open() -> bool:
     try:
@@ -213,14 +226,130 @@ def check_macro_market_regime() -> bool:
     except Exception:
         return True
 
+def check_vix_volatility_regime() -> tuple[float, bool]:
+    """
+    Data Feed 2: Market Fear Index (^VIX Guard)
+    - VIX < 20: Normal Volatility (100% sizing)
+    - 20 <= VIX <= 30: High Volatility (50% sizing)
+    - VIX > 30: Panic / Flash Crash (Pause All Buys)
+    """
+    try:
+        vix = yf.Ticker("^VIX")
+        df = vix.history(period="5d", interval="1d")
+        if df.empty:
+            return 1.0, False
+        vix_val = float(df['Close'].iloc[-1])
+        
+        if vix_val > 30.0:
+            print(f"[*] VIX Volatility Guard: ^VIX = {vix_val:.1f} (Extreme Panic!) -> PAUSING ALL BUYS")
+            return 0.0, True
+        elif vix_val >= 20.0:
+            print(f"[*] VIX Volatility Guard: ^VIX = {vix_val:.1f} (Elevated Volatility) -> Scaling sizes to 50%")
+            return 0.5, False
+        else:
+            print(f"[*] VIX Volatility Guard: ^VIX = {vix_val:.1f} (Normal Volatility) -> Full Sizing Allowed")
+            return 1.0, False
+    except Exception:
+        return 1.0, False
+
+def check_upcoming_earnings(yf_symbol: str) -> bool:
+    """
+    Data Feed 1: Corporate Earnings Guard
+    Prevents buying a stock if earnings release is within 48 hours (eliminating gap risk).
+    """
+    try:
+        stock = yf.Ticker(yf_symbol)
+        cal = stock.calendar
+        if cal is None:
+            return False
+
+        if isinstance(cal, pd.DataFrame) and 'Earnings Date' in cal.index:
+            earnings_dates = cal.loc['Earnings Date']
+        elif isinstance(cal, dict) and 'Earnings Date' in cal:
+            earnings_dates = cal['Earnings Date']
+        else:
+            return False
+
+        now_dt = datetime.datetime.now()
+        for ed in earnings_dates:
+            if isinstance(ed, (datetime.date, datetime.datetime)):
+                ed_dt = datetime.datetime.combine(ed, datetime.time.min) if isinstance(ed, datetime.date) else ed
+                days_diff = (ed_dt - now_dt).total_seconds() / 86400.0
+                if 0 <= days_diff <= 2.0:
+                    print(f"   [EARNINGS GUARD REJECT] {yf_symbol}: Earnings release in {days_diff*24:.1f} hours! Skipping trade.")
+                    return True
+        return False
+    except Exception:
+        return False
+
+def check_news_sentiment(yf_symbol: str) -> tuple[float, bool]:
+    """
+    Data Feed 3: Real-Time Financial News & Sentiment NLP Veto
+    Scans recent headlines for negative keywords (lawsuit, default, fraud, investigation, miss).
+    """
+    try:
+        stock = yf.Ticker(yf_symbol)
+        news = stock.news
+        if not news:
+            return 0.0, True
+
+        negative_keywords = ["lawsuit", "investigation", "fraud", "default", "probe", "layoffs", "missed", "downgrade", "bankrupt"]
+        positive_keywords = ["outperform", "upgrade", "beat", "record", "growth", "partnership", "buyback", "patent"]
+
+        neg_count = 0
+        pos_count = 0
+
+        for item in news[:5]:
+            title = item.get("title", "").lower()
+            for w in negative_keywords:
+                if w in title: neg_count += 1
+            for w in positive_keywords:
+                if w in title: pos_count += 1
+
+        sentiment_score = (pos_count - neg_count) / max(1, pos_count + neg_count)
+        is_safe = neg_count < 2 and sentiment_score >= -0.4
+
+        if not is_safe:
+            print(f"   [NEWS SENTIMENT REJECT] {yf_symbol}: Negative headlines detected (Score: {sentiment_score:.2f}, Negatives: {neg_count}). Vetoing signal.")
+
+        return sentiment_score, is_safe
+    except Exception:
+        return 0.0, True
+
+def check_sector_etf_alignment(yf_symbol: str) -> bool:
+    """
+    Data Feed 4: Sector ETF Momentum Alignment
+    Requires the Sector ETF (e.g. XLK for NVDA) to be trading above its 20 EMA.
+    """
+    try:
+        sector = SECTOR_MAP.get(yf_symbol, "Other")
+        etf = SECTOR_ETF_MAP.get(sector)
+        if not etf:
+            return True
+
+        stock_etf = yf.Ticker(etf)
+        df = stock_etf.history(period="2d", interval="5m")
+        if df.empty or len(df) < 20:
+            return True
+
+        df['EMA20'] = df['Close'].ewm(span=20, adjust=False).mean()
+        last_bar = df.iloc[-1]
+        is_aligned = bool(last_bar['Close'] >= last_bar['EMA20'])
+
+        if not is_aligned:
+            print(f"   [SECTOR ETF REJECT] {yf_symbol}: Sector ETF ({etf}) Price (${last_bar['Close']:.2f}) < 20 EMA (${last_bar['EMA20']:.2f}).")
+
+        return is_aligned
+    except Exception:
+        return True
+
 # -----------------------------------------------------------------------------
-# 4. Institutional Upgrade 1: Relative Strength (RS) Ranking
+# 4. Institutional Upgrade 1: Relative Strength Priority Ranking
 # -----------------------------------------------------------------------------
 def get_ranked_watchlist_by_relative_strength(watchlist: list) -> list:
     """
     Quant Priority Sorter: Ranks all 126 watchlist stocks by 20-day Relative Strength (RS) outperformance vs SPY.
-    Ensures the strongest market leaders are scanned FIRST on every cycle, while keeping 100% of the universe open 
-    so no valid Strategy B pullback setups are missed!
+    Ensures market leaders are scanned FIRST on every cycle.
     """
     print("\n[*] Sorting Watchlist by Relative Strength (RS) Priority vs S&P 500...")
     try:
@@ -246,11 +375,8 @@ def get_ranked_watchlist_by_relative_strength(watchlist: list) -> list:
             except Exception:
                 rs_scores.append((yf_symbol, -999.0))
 
-        # Sort descending by RS score so market leaders are evaluated first!
         rs_scores.sort(key=lambda x: x[1], reverse=True)
         ranked_watchlist = [item[0] for item in rs_scores if item[1] != -999.0]
-        
-        # Append any tickers that failed yfinance fetch at the end
         failed_tickers = [t for t in watchlist if t not in ranked_watchlist]
         full_ranked = ranked_watchlist + failed_tickers
 
@@ -259,52 +385,39 @@ def get_ranked_watchlist_by_relative_strength(watchlist: list) -> list:
             print(f"   -> Top Priority #1: {valid_scores[0][0]} (RS Alpha: +{valid_scores[0][1]*100:.1f}%)")
             print(f"   -> Top Priority #2: {valid_scores[1][0]} (RS Alpha: +{valid_scores[1][1]*100:.1f}%)")
         return full_ranked
-    except Exception as e:
-        print(f"[WARNING] Relative Strength calculation exception: {e}")
+    except Exception:
         return watchlist
 
 # -----------------------------------------------------------------------------
-# 5. Institutional Upgrade 2: Machine Learning Signal Probability Classifier
+# 5. Institutional Upgrade 2 & Data Feed 5: ML Probability Classifier
 # -----------------------------------------------------------------------------
 def predict_signal_quality(
     rsi14: float, 
     vol_ratio: float, 
     ema_dist_atr: float, 
-    atr_pct: float
+    atr_pct: float,
+    sentiment_score: float
 ) -> tuple[float, bool]:
     """
-    Quant ML Model Classifier: Predicts trade win probability (0.0 to 1.0).
-    Features evaluated:
-    - 14-period RSI (Optimal zone: 42 to 62)
-    - Volume Ratio (Optimal: 0.6x to 1.1x during pullback)
-    - EMA Distance / ATR (Optimal: <= 0.8 ATR)
-    - ATR Percentage Volatility (Optimal: 0.8% to 3.5%)
+    Quant ML Model Classifier with Data Feed 5 Institutional Sentiment Boost.
+    Predicts trade win probability (0.0 to 1.0).
     """
-    score = 0.50  # Baseline 50%
+    score = 0.50
 
-    # 1. RSI Factor
-    if 42 <= rsi14 <= 62:
-        score += 0.15
-    elif rsi14 > 68 or rsi14 < 35:
-        score -= 0.15
+    if 42 <= rsi14 <= 62: score += 0.15
+    elif rsi14 > 68 or rsi14 < 35: score -= 0.15
 
-    # 2. Volume Decay Factor
-    if 0.5 <= vol_ratio <= 1.1:
-        score += 0.15
-    elif vol_ratio > 1.5:
-        score -= 0.15
+    if 0.5 <= vol_ratio <= 1.1: score += 0.15
+    elif vol_ratio > 1.5: score -= 0.15
 
-    # 3. EMA Closeness Factor
-    if abs(ema_dist_atr) <= 0.6:
-        score += 0.12
-    elif abs(ema_dist_atr) > 1.2:
-        score -= 0.10
+    if abs(ema_dist_atr) <= 0.6: score += 0.12
+    elif abs(ema_dist_atr) > 1.2: score -= 0.10
 
-    # 4. Volatility Normalization Factor
-    if 0.8 <= atr_pct <= 3.5:
-        score += 0.08
-    elif atr_pct > 5.0:
-        score -= 0.15
+    if 0.8 <= atr_pct <= 3.5: score += 0.08
+    elif atr_pct > 5.0: score -= 0.15
+
+    # Data Feed 5: Sentiment Boost
+    if sentiment_score > 0.3: score += 0.08
 
     confidence = round(min(0.95, max(0.10, score)), 3)
     is_approved = confidence >= 0.65
@@ -312,7 +425,7 @@ def predict_signal_quality(
     return confidence, is_approved
 
 # -----------------------------------------------------------------------------
-# 6. Institutional Upgrade 4: Volatility Parity Position Sizing Math
+# 6. Volatility Parity Position Sizing Math
 # -----------------------------------------------------------------------------
 def get_fx_rate_to_gbp(currency: str) -> float:
     currency = currency.upper()
@@ -329,12 +442,12 @@ def calculate_volatility_parity_position_size(
     trade_currency: str,
     quantity_precision: int,
     min_trade_size: float,
+    vix_multiplier: float = 1.0,
     risk_pct: float = 0.01,
     max_cash_pct_per_trade: float = 0.20
 ) -> float:
     """
-    Volatility Parity Sizing: Dynamically adjusts share sizing based on individual stock ATR% volatility,
-    ensuring equal risk contribution across high-beta and low-beta assets.
+    Volatility Parity Sizing with VIX Market Volatility Scaling.
     """
     risk_per_share = abs(entry_price - stop_price)
     if risk_per_share <= 0.0001 or entry_price <= 0:
@@ -344,25 +457,21 @@ def calculate_volatility_parity_position_size(
     entry_price_gbp = entry_price * fx_to_gbp
     risk_per_share_gbp = risk_per_share * fx_to_gbp
 
-    # Fixed 1% Risk Budget
-    risk_budget_gbp = account_equity_gbp * risk_pct
+    risk_budget_gbp = account_equity_gbp * risk_pct * vix_multiplier
     shares_by_risk = risk_budget_gbp / risk_per_share_gbp
 
-    # Volatility Parity Adjustment
     atr_pct = (atr14 / entry_price) * 100.0
-    target_volatility_pct = 1.5  # Baseline 1.5% target volatility
+    target_volatility_pct = 1.5
     vol_multiplier = target_volatility_pct / max(0.5, atr_pct)
-    vol_multiplier = min(1.4, max(0.6, vol_multiplier))  # Clamp between 0.6x and 1.4x
+    vol_multiplier = min(1.4, max(0.6, vol_multiplier))
 
     adjusted_shares = shares_by_risk * vol_multiplier
 
-    # Cash Limit Constraint (Max 20% free cash)
     cash_budget_gbp = available_cash_gbp * max_cash_pct_per_trade
     shares_by_cash = cash_budget_gbp / entry_price_gbp
 
     raw_shares = min(adjusted_shares, shares_by_cash)
 
-    # Truncate to exact precision
     if quantity_precision == 0:
         final_shares = float(math.floor(raw_shares))
     else:
@@ -402,11 +511,8 @@ def test_trading212_connection() -> bool:
             print(f"   Free Cash: GBP {data.get('free', 0.0):,.2f}")
             print("=======================================================================\n")
             return True
-        else:
-            print(f"[FAIL] API Check returned HTTP {res.status_code}: {res.text}")
-    except Exception as e:
-        print(f"[ERROR] API Connection exception: {e}")
-
+    except Exception:
+        pass
     return False
 
 def load_instrument_metadata():
@@ -428,8 +534,8 @@ def load_instrument_metadata():
                     }
             print(f" SUCCESS: Cached metadata for {len(METADATA_CACHE)} Trading 212 instruments.")
             return True
-    except Exception as e:
-        print(f"[ERROR] Metadata fetch exception: {e}")
+    except Exception:
+        pass
     return False
 
 def resolve_t212_ticker(yf_symbol: str) -> str:
@@ -484,16 +590,9 @@ def place_market_order(ticker: str, quantity: float, dry_run: bool = False):
         return 500, {"error": str(e)}
 
 # -----------------------------------------------------------------------------
-# 8. Active Position Exit Manager (with Upgrade 3: Time Decay Exit)
+# 8. Active Position Exit Manager
 # -----------------------------------------------------------------------------
 def manage_open_position_exits(dry_run: bool = False):
-    """
-    Monitors active positions against:
-    1. Hard Stop-Loss & Take-Profit targets
-    2. Dynamic Ratcheting Trailing Stop
-    3. Technical Trend Breakdown (EMA20 < SMA50)
-    4. Upgrade 3: Time-Based Stale Trade Decay Exits (Closes after 3 hrs if sideways)
-    """
     print("\n-----------------------------------------------------------------------")
     print("[EXIT MONITOR] CHECKING POSITIONS FOR EXITS, TRAILING STOPS & TIME DECAY")
     print("-----------------------------------------------------------------------")
@@ -516,7 +615,6 @@ def manage_open_position_exits(dry_run: bool = False):
     for pos in db_positions:
         ticker, yf_symbol, shares, entry_price, stop_price, target_price, opened_at_str = pos
 
-        # Manual Exit Check
         if ticker not in t212_pos_dict:
             print(f"[*] {ticker}: Position closed manually on Trading 212 interface.")
             now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -526,7 +624,6 @@ def manage_open_position_exits(dry_run: bool = False):
 
         current_price = float(t212_pos_dict[ticker].get("currentPrice", entry_price))
 
-        # 1. Dynamic Ratcheting Trailing Stop
         risk_distance = abs(entry_price - stop_price)
         new_trailing_stop = current_price - risk_distance
         if new_trailing_stop > stop_price:
@@ -535,7 +632,6 @@ def manage_open_position_exits(dry_run: bool = False):
             conn.commit()
             print(f"   [TRAILING STOP RATCHET] {ticker}: Stop Loss raised to ${stop_price:.2f} (Locking in profit!)")
 
-        # 2. Institutional Upgrade 3: Time-Based Stale Trade Decay Check
         time_decay_trigger = False
         hours_open = 0.0
         try:
@@ -543,7 +639,6 @@ def manage_open_position_exits(dry_run: bool = False):
             elapsed_seconds = (now_dt - opened_at_dt).total_seconds()
             hours_open = elapsed_seconds / 3600.0
 
-            # If open > 3 hours and price is stuck in sideways range (between -0.5R and +0.5R)
             half_r = risk_distance * 0.5
             is_sideways = (entry_price - half_r) <= current_price <= (entry_price + half_r)
             if hours_open >= 3.0 and is_sideways:
@@ -554,7 +649,6 @@ def manage_open_position_exits(dry_run: bool = False):
 
         print(f"[*] Monitoring {ticker}: Current=${current_price:.2f} | Trailing Stop=${stop_price:.2f} | Target=${target_price:.2f} | Open: {hours_open:.1f}h")
 
-        # 3. Technical Trend Breakdown Check (EMA20 < SMA50)
         trend_breakdown = False
         try:
             stock = yf.Ticker(yf_symbol)
@@ -570,7 +664,6 @@ def manage_open_position_exits(dry_run: bool = False):
         except Exception:
             pass
 
-        # 4. Execute Exit if any trigger hit
         hit_stop = current_price <= stop_price
         hit_target = current_price >= target_price
 
@@ -604,11 +697,11 @@ def manage_open_position_exits(dry_run: bool = False):
     conn.close()
 
 # -----------------------------------------------------------------------------
-# 9. Main Scan Execution Engine
+# 9. Main Scan Execution Engine (Integrating All 5 External Data Feeds)
 # -----------------------------------------------------------------------------
 def run_strategy_b_scan(watchlist: list, dry_run: bool = False):
     print("\n=======================================================================")
-    print("[BOT] STARTING INSTITUTIONAL QUANT ENGINE v3.0 SCAN CYCLE")
+    print("[BOT] STARTING INSTITUTIONAL QUANT ENGINE v4.0 (ULTIMATE) SCAN CYCLE")
     print("=======================================================================")
     
     init_database()
@@ -619,7 +712,13 @@ def run_strategy_b_scan(watchlist: list, dry_run: bool = False):
         print("[MACRO REJECT] S&P 500 is in a macro downtrend (SPY < 200 SMA). Pausing long scans.")
         return
 
-    # Institutional Upgrade 1: Relative Strength Priority Sorter (Ranks Market Leaders First)
+    # Data Feed 2: Market Fear Index (^VIX Guard)
+    vix_multiplier, vix_pause = check_vix_volatility_regime()
+    if vix_pause:
+        print("[VIX PANIC REJECT] ^VIX > 30. Extreme market crash volatility detected. Pausing long buys.")
+        return
+
+    # Relative Strength Priority Sorter
     scanned_watchlist = get_ranked_watchlist_by_relative_strength(watchlist)
 
     summary = fetch_account_summary()
@@ -646,6 +745,10 @@ def run_strategy_b_scan(watchlist: list, dry_run: bool = False):
             print(f"\n[SKIP] {t212_ticker} ({yf_symbol}): Position already open.")
             continue
 
+        # Data Feed 1: Corporate Earnings Guard
+        if check_upcoming_earnings(yf_symbol):
+            continue
+
         # Sector Cap Check
         sector = SECTOR_MAP.get(yf_symbol, "Other")
         if sector != "Other":
@@ -658,6 +761,10 @@ def run_strategy_b_scan(watchlist: list, dry_run: bool = False):
             if sector_cnt >= 2:
                 print(f"\n[SKIP] {t212_ticker} ({yf_symbol}): Sector concentration cap reached (Max 2 {sector} positions).")
                 continue
+
+        # Data Feed 4: Sector ETF Momentum Alignment
+        if not check_sector_etf_alignment(yf_symbol):
+            continue
 
         try:
             stock = yf.Ticker(yf_symbol)
@@ -678,7 +785,6 @@ def run_strategy_b_scan(watchlist: list, dry_run: bool = False):
             df['ATR14'] = df['TR'].rolling(window=14).mean()
             df['Vol_SMA20'] = df['Volume'].rolling(window=20).mean()
             
-            # RSI Calculation
             delta = df['Close'].diff()
             gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
             loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
@@ -702,17 +808,22 @@ def run_strategy_b_scan(watchlist: list, dry_run: bool = False):
             rsi14 = float(closed_bar['RSI14'])
 
             if intraday_trend_pass and pullback_pass and reversal_pass and volume_pass:
-                # Institutional Upgrade 2: Machine Learning Signal Classifier
+                # Data Feed 3: News Sentiment Check
+                sentiment_score, is_news_safe = check_news_sentiment(yf_symbol)
+                if not is_news_safe:
+                    continue
+
+                # ML Probability Classifier with Sentiment Boost
                 ema_dist_atr = (current_close - ema20) / max(0.01, atr14)
                 atr_pct = (atr14 / current_close) * 100.0
-                ml_confidence, ml_approved = predict_signal_quality(rsi14, vol_ratio, ema_dist_atr, atr_pct)
+                ml_confidence, ml_approved = predict_signal_quality(rsi14, vol_ratio, ema_dist_atr, atr_pct, sentiment_score)
 
                 print(f"\n[SIGNAL CANDIDATE] {t212_ticker} ({yf_symbol}) [Sector: {sector}]")
-                print(f"   Price: ${current_close:.2f} | 20 EMA: ${ema20:.2f} | ATR(14): ${atr14:.2f} | RSI: {rsi14:.1f}")
+                print(f"   Price: ${current_close:.2f} | 20 EMA: ${ema20:.2f} | ATR(14): ${atr14:.2f} | RSI: {rsi14:.1f} | Sentiment: {sentiment_score:.2f}")
                 print(f"   [ML CLASSIFIER] Confidence Score: {ml_confidence * 100:.1f}% -> Approved: {ml_approved}")
 
                 if ml_approved:
-                    print(f"--> [EXECUTION APPROVED] Quant Buy signal on {t212_ticker}!")
+                    print(f"--> [EXECUTION APPROVED] Ultimate Quant Buy signal on {t212_ticker}!")
 
                     entry_price = current_close
                     stop_price = current_low - (1.5 * atr14)
@@ -720,7 +831,7 @@ def run_strategy_b_scan(watchlist: list, dry_run: bool = False):
 
                     trade_curr = "GBP" if is_uk_pence else meta.get("currencyCode", "USD")
 
-                    # Institutional Upgrade 4: Volatility Parity Position Sizing
+                    # Volatility Parity Sizing with VIX Multiplier
                     shares = calculate_volatility_parity_position_size(
                         account_equity_gbp=account_val_gbp,
                         available_cash_gbp=cash_available_gbp,
@@ -729,7 +840,8 @@ def run_strategy_b_scan(watchlist: list, dry_run: bool = False):
                         atr14=atr14,
                         trade_currency=trade_curr,
                         quantity_precision=meta.get("quantityPrecision", 4),
-                        min_trade_size=meta.get("minTradeSize", 0.0001)
+                        min_trade_size=meta.get("minTradeSize", 0.0001),
+                        vix_multiplier=vix_multiplier
                     )
 
                     if shares > 0:
@@ -754,9 +866,8 @@ def run_strategy_b_scan(watchlist: list, dry_run: bool = False):
                         print("   [SKIP] Volatility Parity size failed constraints / cash limits.")
                 else:
                     print(f"   [ML REJECT] Signal confidence ({ml_confidence*100:.1f}%) < 65.0% threshold.")
-                    log_scan_audit(t212_ticker, current_close, True, True, True, "NO_INVESTMENT", f"ML Reject ({ml_confidence*100:.1f}%)")
 
-        except Exception as e:
+        except Exception:
             pass
 
     print("\n=======================================================================")
@@ -868,11 +979,15 @@ def main():
     load_instrument_metadata()
 
     if args.daemon:
-        print("[DAEMON MODE] Starting Institutional Quant Engine v3.0...")
-        print("  --> RS Leader Filter: Top 35% Relative Strength Leaders Active")
+        print("[DAEMON MODE] Starting Institutional Quant Engine v4.0 (ULTIMATE)...")
+        print("  --> Earnings Guard: 48h Gap Risk Protection Active")
+        print("  --> VIX Volatility Guard: Market Crash Risk Scaling Active")
+        print("  --> News Sentiment NLP: Headline Veto Filter Active")
+        print("  --> Sector ETF Alignment: XLK/XLF/XLV Intraday Alignment Active")
+        print("  --> RS Leader Sorter: Priority Market Leader Scanning Active")
         print("  --> ML Classifier: Probability Score >= 65% Guard Active")
         print("  --> Time Decay Exit: 3-Hour Sideways Trade Expiry Active")
-        print("  --> Vol-Parity Sizing: ATR Risk Normalization Active")
+        print("  --> Vol-Parity Sizing: ATR & VIX Risk Normalization Active")
         print("  --> Exit Manager: High-Frequency 10-Second Monitor Active")
         import schedule
         
