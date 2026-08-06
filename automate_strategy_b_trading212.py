@@ -649,16 +649,24 @@ def main():
     init_database()
     init_csv_logs()
 
-    # Expanded Default Watchlist (Top US MegaCaps + Nasdaq 100 + European Leaders)
+    # Expanded Default Watchlist (Top US MegaCaps + Nasdaq 100 + Large/Mid-Cap Leaders)
     default_watchlist = [
-        # US Tech & MegaCaps
+        # US Tech & MegaCaps (50)
         "NVDA", "AAPL", "MSFT", "TSLA", "AMZN", "GOOGL", "AMD", "META", "AVGO", "LLY",
         "JPM", "WMT", "V", "UNH", "MA", "PG", "COST", "JNJ", "HD", "ORCL",
         "BAC", "XOM", "NFLX", "CRM", "CVX", "ABBV", "MRK", "KO", "PEP", "TMO",
         "CSCO", "MCD", "ABT", "DIS", "GE", "IBM", "INTC", "PM", "CAT", "TXN",
         "QCOM", "AMAT", "NOW", "PANW", "UBER", "MU", "GS", "MS", "AXP", "BLK",
         
-        # UK & European Leaders
+        # High-Growth Large & Mid-Cap Leaders (60 New Tickers)
+        "PLTR", "COIN", "SQ", "SHOP", "SPOT", "NET", "DDOG", "SNOW", "CRWD", "ZS",
+        "MDB", "ROKU", "DKNG", "SNAP", "PINS", "RBLX", "TWLO", "PATH", "AFRM", "UPST",
+        "SMCI", "ARM", "APP", "CVNA", "HOOD", "ASTS", "IONQ", "MARA", "RIOT", "CLSK",
+        "HIMS", "TOST", "DUOL", "SOFI", "CELH", "ON", "MPWR", "ENTG", "FSLR", "ENPH",
+        "F", "GM", "RIVN", "LCID", "NIO", "BABA", "PDD", "BIDU", "JD", "LI",
+        "SE", "GRAB", "MELI", "CPNG", "NU", "STNE", "VALE", "PBR", "ITUB", "GOLD",
+        
+        # UK & European Leaders (16)
         "SHEL.L", "AZN.L", "HSBA.L", "ULVR.L", "BP.L", "GSK.L", "BARC.L",
         "SAP.DE", "SIE.DE", "ALV.DE", "AIR.DE", "BMW.DE", "MC.PA", "OR.PA", "RMS.PA", "ASML.AS"
     ]
