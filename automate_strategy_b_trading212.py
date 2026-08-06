@@ -382,11 +382,13 @@ def calculate_constrained_position_size(
 # -----------------------------------------------------------------------------
 def manage_open_position_exits(dry_run: bool = False):
     """
-    Monitors active positions against stop_price and target_price.
-    Submits market sell orders if stop or target thresholds are breached.
+    Monitors active positions against:
+    1. Hard Stop-Loss & Take-Profit targets
+    2. Dynamic Ratcheting Trailing Stop (locks in gains as price rises)
+    3. Technical Trend Breakdown Sell Signal (EMA20 < SMA50)
     """
     print("\n-----------------------------------------------------------------------")
-    print("[EXIT MONITOR] CHECKING OPEN POSITIONS FOR STOP-LOSS / TAKE-PROFIT")
+    print("[EXIT MONITOR] CHECKING OPEN POSITIONS FOR EXITS & TRAILING STOPS")
     print("-----------------------------------------------------------------------")
     
     t212_positions = fetch_open_positions()
@@ -413,18 +415,50 @@ def manage_open_position_exits(dry_run: bool = False):
             conn.commit()
             continue
 
-        # Get latest current price
         current_price = float(t212_pos_dict[ticker].get("currentPrice", entry_price))
 
-        print(f"[*] Monitoring {ticker}: Current=${current_price:.2f} | Stop=${stop_price:.2f} | Target=${target_price:.2f}")
+        # 1. Dynamic Ratcheting Trailing Stop
+        risk_distance = abs(entry_price - stop_price)
+        new_trailing_stop = current_price - risk_distance
 
-        # Check Exit Triggers
+        if new_trailing_stop > stop_price:
+            stop_price = round(new_trailing_stop, 2)
+            cursor.execute("UPDATE trades SET stop_price = ? WHERE ticker = ?", (stop_price, ticker))
+            conn.commit()
+            print(f"   [TRAILING STOP RATCHET] {ticker}: Stop Loss raised to ${stop_price:.2f} (Locking in profit!)")
+
+        print(f"[*] Monitoring {ticker}: Current=${current_price:.2f} | Trailing Stop=${stop_price:.2f} | Target=${target_price:.2f}")
+
+        # 2. Technical Trend Breakdown Sell Signal Check (EMA20 < SMA50)
+        trend_breakdown = False
+        try:
+            stock = yf.Ticker(yf_symbol)
+            df = stock.history(period="2d", interval="5m")
+            if not df.empty and len(df) >= 50:
+                if yf_symbol.endswith(".L"):
+                    df['Close'] /= 100.0
+                df['EMA20'] = df['Close'].ewm(span=20, adjust=False).mean()
+                df['SMA50'] = df['Close'].rolling(window=50).mean()
+                closed_bar = df.iloc[-2]
+                if closed_bar['EMA20'] < closed_bar['SMA50']:
+                    trend_breakdown = True
+                    print(f"   [TECHNICAL SELL SIGNAL] {ticker}: EMA20 (${closed_bar['EMA20']:.2f}) crossed below SMA50 (${closed_bar['SMA50']:.2f})!")
+        except Exception as e:
+            pass  # Fallback gracefully if yfinance temporary timeout
+
+        # 3. Check Exit Triggers
         hit_stop = current_price <= stop_price
         hit_target = current_price >= target_price
 
-        if hit_stop or hit_target:
-            exit_type = "STOP_LOSS" if hit_stop else "TAKE_PROFIT"
-            print(f"--> [EXIT TRIGGER] {exit_type} reached for {ticker}! Submitting Market SELL order...")
+        if hit_stop or hit_target or trend_breakdown:
+            if hit_target:
+                exit_type = "TAKE_PROFIT"
+            elif hit_stop:
+                exit_type = "STOP_LOSS"
+            else:
+                exit_type = "TREND_BREAKDOWN_SELL"
+
+            print(f"--> [EXIT TRIGGER] {exit_type} fired for {ticker}! Submitting Market SELL order...")
 
             status_code, resp = place_market_order(ticker, -abs(shares), dry_run=dry_run)
             if status_code in (200, 201):
@@ -444,7 +478,7 @@ def manage_open_position_exits(dry_run: bool = False):
                     f.write(log_line)
                     f.flush()
 
-                print(f" SUCCESS: {ticker} position closed. Realized PnL: ${realized_pnl:.2f}")
+                print(f" SUCCESS: {ticker} position closed via {exit_type}. Realized PnL: ${realized_pnl:.2f}")
             else:
                 print(f"[ERROR] Failed submitting exit order for {ticker}: {resp}")
 
