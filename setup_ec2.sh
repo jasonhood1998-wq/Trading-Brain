@@ -21,9 +21,8 @@ elif command -v dnf &> /dev/null; then
 fi
 
 # 2. Set up application directory
-# Detect user's home directory (e.g. /home/ec2-user/trading_brain or /home/ubuntu/trading_brain)
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-APP_DIR="$( cd "${SCRIPT_DIR}/.." && pwd )"
+APP_DIR="${SCRIPT_DIR}"
 
 echo "[2/5] Using application directory at ${APP_DIR}..."
 
@@ -51,7 +50,10 @@ fi
 
 # 5. Install Systemd Service
 echo "[5/5] Registering systemd daemon service..."
-SERVICE_SRC="${APP_DIR}/.github/trading_brain.service"
+SERVICE_SRC="${APP_DIR}/trading_brain.service"
+if [ ! -f "$SERVICE_SRC" ]; then
+    SERVICE_SRC="${APP_DIR}/.github/trading_brain.service"
+fi
 SERVICE_DEST="/etc/systemd/system/trading_brain.service"
 
 if [ -f "$SERVICE_SRC" ]; then
@@ -59,7 +61,7 @@ if [ -f "$SERVICE_SRC" ]; then
     sudo sed -i "s|User=ubuntu|User=$USER|g" $SERVICE_DEST
     sudo sed -i "s|WorkingDirectory=/opt/trading_brain|WorkingDirectory=${APP_DIR}|g" $SERVICE_DEST
     sudo sed -i "s|/opt/trading_brain/venv/bin/python|${APP_DIR}/venv/bin/python|g" $SERVICE_DEST
-    sudo sed -i "s|/opt/trading_brain/automate_strategy_b_trading212.py|${APP_DIR}/.github/automate_strategy_b_trading212.py|g" $SERVICE_DEST
+    sudo sed -i "s|/opt/trading_brain/automate_strategy_b_trading212.py|${APP_DIR}/automate_strategy_b_trading212.py|g" $SERVICE_DEST
     sudo systemctl daemon-reload
     sudo systemctl enable trading_brain.service
     echo " SUCCESS: Registered systemd service 'trading_brain.service' for user '$USER' at ${APP_DIR}"
