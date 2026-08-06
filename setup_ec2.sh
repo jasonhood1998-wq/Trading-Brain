@@ -17,14 +17,15 @@ if command -v apt-get &> /dev/null; then
     sudo apt-get install -y python3 python3-pip python3-venv git curl
 elif command -v dnf &> /dev/null; then
     sudo dnf update -y
-    sudo dnf install -y python3 python3-pip git curl
+    sudo dnf install -y python3 python3-pip git
 fi
 
 # 2. Set up application directory
-APP_DIR="/opt/trading_brain"
-echo "[2/5] Setting up application directory at ${APP_DIR}..."
-sudo mkdir -p ${APP_DIR}
-sudo chown -R $USER:$USER ${APP_DIR}
+# Detect user's home directory (e.g. /home/ec2-user/trading_brain or /home/ubuntu/trading_brain)
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+APP_DIR="$( cd "${SCRIPT_DIR}/.." && pwd )"
+
+echo "[2/5] Using application directory at ${APP_DIR}..."
 
 # 3. Create Python Virtual Environment & Install Dependencies
 echo "[3/5] Setting up Python virtual environment..."
@@ -50,15 +51,18 @@ fi
 
 # 5. Install Systemd Service
 echo "[5/5] Registering systemd daemon service..."
-SERVICE_SRC="${APP_DIR}/trading_brain.service"
+SERVICE_SRC="${APP_DIR}/.github/trading_brain.service"
 SERVICE_DEST="/etc/systemd/system/trading_brain.service"
 
 if [ -f "$SERVICE_SRC" ]; then
     sudo cp $SERVICE_SRC $SERVICE_DEST
-    sudo sed -i "s/User=ubuntu/User=$USER/g" $SERVICE_DEST
+    sudo sed -i "s|User=ubuntu|User=$USER|g" $SERVICE_DEST
+    sudo sed -i "s|WorkingDirectory=/opt/trading_brain|WorkingDirectory=${APP_DIR}|g" $SERVICE_DEST
+    sudo sed -i "s|/opt/trading_brain/venv/bin/python|${APP_DIR}/venv/bin/python|g" $SERVICE_DEST
+    sudo sed -i "s|/opt/trading_brain/automate_strategy_b_trading212.py|${APP_DIR}/.github/automate_strategy_b_trading212.py|g" $SERVICE_DEST
     sudo systemctl daemon-reload
     sudo systemctl enable trading_brain.service
-    echo " SUCCESS: Registered systemd service 'trading_brain.service' for user '$USER'"
+    echo " SUCCESS: Registered systemd service 'trading_brain.service' for user '$USER' at ${APP_DIR}"
     echo " Run 'sudo systemctl start trading_brain' to start continuous execution."
 else
     echo "[WARNING] Service file $SERVICE_SRC not found. Skip systemd registration."
