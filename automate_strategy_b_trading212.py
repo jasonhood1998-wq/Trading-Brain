@@ -361,10 +361,10 @@ def calculate_constrained_position_size(
 
     # 4. Truncate quantity to exact API precision rules
     if quantity_precision == 0:
-        final_shares = math.floor(raw_shares)
+        final_shares = float(math.floor(raw_shares))
     else:
         multiplier = 10 ** quantity_precision
-        final_shares = math.floor(raw_shares * multiplier) / multiplier
+        final_shares = round(math.floor(raw_shares * multiplier) / multiplier, quantity_precision)
 
     # 5. Final validation checks
     if final_shares < min_trade_size:
