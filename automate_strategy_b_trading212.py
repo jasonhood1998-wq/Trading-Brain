@@ -634,7 +634,6 @@ def run_strategy_b_scan(watchlist: list, dry_run: bool = False):
     print("\n=======================================================================")
     print("[BOT] SCAN CYCLE COMPLETED")
     print("=======================================================================")
-
 # -----------------------------------------------------------------------------
 # 8. Entrypoint & Daemon Loop
 # -----------------------------------------------------------------------------
@@ -644,20 +643,11 @@ def main():
     parser.add_argument("--daemon", action="store_true", help="Run continuously in 5-minute daemon loop.")
     parser.add_argument("--dry-run", action="store_true", help="Simulate signals and orders without API submission.")
     parser.add_argument("--test-connection", action="store_true", help="Test Trading 212 API connection and exit.")
+    parser.add_argument("--show-watchlist", action="store_true", help="Print active watchlist tickers and exit.")
     args = parser.parse_args()
 
     init_database()
     init_csv_logs()
-
-    if args.test_connection:
-        success = test_trading212_connection()
-        sys.exit(0 if success else 1)
-
-    if not test_trading212_connection():
-        print("[CRITICAL] API connection failed. Stopping execution.")
-        sys.exit(1)
-
-    load_instrument_metadata()
 
     # Expanded Default Watchlist (Top US MegaCaps + Nasdaq 100 + European Leaders)
     default_watchlist = [
@@ -685,6 +675,25 @@ def main():
             watchlist = default_watchlist
     else:
         watchlist = default_watchlist
+
+    if args.show_watchlist:
+        print("\n=======================================================================")
+        print(f"[WATCHLIST] ACTIVE STRATEGY B WATCHLIST ({len(watchlist)} TICKERS)")
+        print("=======================================================================")
+        for i, t in enumerate(watchlist, 1):
+            print(f"  {i:02d}. {t}")
+        print("=======================================================================\n")
+        sys.exit(0)
+
+    if args.test_connection:
+        success = test_trading212_connection()
+        sys.exit(0 if success else 1)
+
+    if not test_trading212_connection():
+        print("[CRITICAL] API connection failed. Stopping execution.")
+        sys.exit(1)
+
+    load_instrument_metadata()
 
     if args.daemon:
         print("[DAEMON MODE] Starting continuous trading engine...")
