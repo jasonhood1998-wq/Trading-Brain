@@ -625,10 +625,32 @@ def main():
 
     load_instrument_metadata()
 
-    watchlist = [
-        "NVDA", "AAPL", "MSFT", "TSLA", "AMZN", "GOOGL", "AMD", "META",
-        "SHEL.L", "AZN.L", "HSBA.L", "SAP.DE", "SIE.DE", "MC.PA"
+    # Expanded Default Watchlist (Top US MegaCaps + Nasdaq 100 + European Leaders)
+    default_watchlist = [
+        # US Tech & MegaCaps
+        "NVDA", "AAPL", "MSFT", "TSLA", "AMZN", "GOOGL", "AMD", "META", "AVGO", "LLY",
+        "JPM", "WMT", "V", "UNH", "MA", "PG", "COST", "JNJ", "HD", "ORCL",
+        "BAC", "XOM", "NFLX", "CRM", "CVX", "ABBV", "MRK", "KO", "PEP", "TMO",
+        "CSCO", "MCD", "ABT", "DIS", "GE", "IBM", "INTC", "PM", "CAT", "TXN",
+        "QCOM", "AMAT", "NOW", "PANW", "UBER", "MU", "GS", "MS", "AXP", "BLK",
+        
+        # UK & European Leaders
+        "SHEL.L", "AZN.L", "HSBA.L", "ULVR.L", "BP.L", "GSK.L", "BARC.L",
+        "SAP.DE", "SIE.DE", "ALV.DE", "AIR.DE", "BMW.DE", "MC.PA", "OR.PA", "RMS.PA", "ASML.AS"
     ]
+
+    # Load custom watchlist.txt if present
+    watchlist_file = os.path.join(SCRIPT_DIR, "watchlist.txt")
+    if os.path.exists(watchlist_file):
+        with open(watchlist_file, "r") as f:
+            custom_list = [line.strip().upper() for line in f if line.strip() and not line.startswith("#")]
+        if custom_list:
+            watchlist = custom_list
+            print(f"[*] Loaded {len(watchlist)} custom tickers from watchlist.txt")
+        else:
+            watchlist = default_watchlist
+    else:
+        watchlist = default_watchlist
 
     if args.daemon:
         print("[DAEMON MODE] Starting continuous trading engine...")
