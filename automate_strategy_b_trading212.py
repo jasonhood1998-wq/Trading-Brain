@@ -39,38 +39,56 @@ IS_DEMO = os.getenv("TRADING212_DEMO", "true").lower() == "true"
 
 BASE_URL = "https://demo.trading212.com/api/v0" if IS_DEMO else "https://live.trading212.com/api/v0"
 
-# Caches
+# Caches & Maps
 METADATA_CACHE = {}
+
+# Sector Concentration Map
+SECTOR_MAP = {
+    # Tech (Software, Semiconductors, Cloud, AI)
+    "NVDA": "Tech", "AAPL": "Tech", "MSFT": "Tech", "AMD": "Tech", "META": "Tech", "AVGO": "Tech", 
+    "ORCL": "Tech", "CRM": "Tech", "NFLX": "Tech", "CSCO": "Tech", "IBM": "Tech", "INTC": "Tech", 
+    "TXN": "Tech", "QCOM": "Tech", "AMAT": "Tech", "NOW": "Tech", "PANW": "Tech", "UBER": "Tech", 
+    "MU": "Tech", "PLTR": "Tech", "COIN": "Tech", "SQ": "Tech", "SHOP": "Tech", "SPOT": "Tech", 
+    "NET": "Tech", "DDOG": "Tech", "SNOW": "Tech", "CRWD": "Tech", "ZS": "Tech", "MDB": "Tech", 
+    "ROKU": "Tech", "SNAP": "Tech", "PINS": "Tech", "RBLX": "Tech", "TWLO": "Tech", "PATH": "Tech", 
+    "AFRM": "Tech", "UPST": "Tech", "SMCI": "Tech", "ARM": "Tech", "APP": "Tech", "CVNA": "Tech", 
+    "HOOD": "Tech", "ASTS": "Tech", "IONQ": "Tech", "MARA": "Tech", "RIOT": "Tech", "CLSK": "Tech", 
+    "ASML.AS": "Tech", "SAP.DE": "Tech",
+
+    # Financials & FinTech
+    "JPM": "Financials", "V": "Financials", "MA": "Financials", "BAC": "Financials", "GS": "Financials", 
+    "MS": "Financials", "AXP": "Financials", "BLK": "Financials", "SOFI": "Financials", "NU": "Financials", 
+    "STNE": "Financials", "ITUB": "Financials", "HSBA.L": "Financials", "BARC.L": "Financials", 
+    "ALV.DE": "Financials", "INGA.AS": "Financials",
+
+    # Healthcare & Pharma
+    "LLY": "Healthcare", "UNH": "Healthcare", "JNJ": "Healthcare", "ABBV": "Healthcare", "MRK": "Healthcare", 
+    "TMO": "Healthcare", "ABT": "Healthcare", "HIMS": "Healthcare", "AZN.L": "Healthcare", "GSK.L": "Healthcare",
+
+    # Consumer & Retail & EV
+    "AMZN": "Consumer", "TSLA": "Consumer", "WMT": "Consumer", "PG": "Consumer", "COST": "Consumer", 
+    "HD": "Consumer", "KO": "Consumer", "PEP": "Consumer", "MCD": "Consumer", "DIS": "Consumer", 
+    "PM": "Consumer", "DKNG": "Consumer", "TOST": "Consumer", "DUOL": "Consumer", "CELH": "Consumer", 
+    "BABA": "Consumer", "PDD": "Consumer", "BIDU": "Consumer", "JD": "Consumer", "LI": "Consumer", 
+    "SE": "Consumer", "GRAB": "Consumer", "MELI": "Consumer", "CPNG": "Consumer", "ULVR.L": "Consumer", 
+    "F": "Consumer", "GM": "Consumer", "RIVN": "Consumer", "LCID": "Consumer", "NIO": "Consumer", 
+    "BMW.DE": "Consumer", "MC.PA": "Consumer", "OR.PA": "Consumer", "RMS.PA": "Consumer",
+
+    # Industrial, Energy & Materials
+    "XOM": "Energy", "CVX": "Energy", "CAT": "Industrial", "GE": "Industrial", "FSLR": "Energy", 
+    "ENPH": "Energy", "VALE": "Materials", "PBR": "Energy", "GOLD": "Materials", "SHEL.L": "Energy", 
+    "BP.L": "Energy", "SIE.DE": "Industrial", "AIR.DE": "Industrial"
+}
+
 YF_TO_T212_MAP = {
-    "NVDA": "NVDA_US_EQ",
-    "AAPL": "AAPL_US_EQ",
-    "MSFT": "MSFT_US_EQ",
-    "TSLA": "TSLA_US_EQ",
-    "AMZN": "AMZN_US_EQ",
-    "GOOGL": "GOOGL_US_EQ",
-    "AMD": "AMD_US_EQ",
-    "META": "META_US_EQ",
-    "SHEL.L": "SHELl_UK_EQ",
-    "AZN.L": "AZNl_UK_EQ",
-    "HSBA.L": "HSBAl_UK_EQ",
-    "ULVR.L": "ULVRl_UK_EQ",
-    "BP.L": "BPl_UK_EQ",
-    "GSK.L": "GSKl_UK_EQ",
-    "BARC.L": "BARCl_UK_EQ",
-    "SAP.DE": "SAPd_DE_EQ",
-    "SIE.DE": "SIEd_DE_EQ",
-    "ALV.DE": "ALVd_DE_EQ",
-    "AIR.DE": "AIRd_DE_EQ",
-    "DTE.DE": "DTEd_DE_EQ",
-    "BMW.DE": "BMWd_DE_EQ",
-    "BAS.DE": "BASd_DE_EQ",
-    "MC.PA": "MCp_FR_EQ",
-    "OR.PA": "ORp_FR_EQ",
-    "TTE.PA": "TTEp_FR_EQ",
-    "RMS.PA": "RMSp_FR_EQ",
-    "ASML.AS": "ASMLa_NL_EQ",
-    "INGA.AS": "INGAa_NL_EQ",
-    "PRX.AS": "PRXa_NL_EQ",
+    "NVDA": "NVDA_US_EQ", "AAPL": "AAPL_US_EQ", "MSFT": "MSFT_US_EQ", "TSLA": "TSLA_US_EQ",
+    "AMZN": "AMZN_US_EQ", "GOOGL": "GOOGL_US_EQ", "AMD": "AMD_US_EQ", "META": "META_US_EQ",
+    "SHEL.L": "SHELl_UK_EQ", "AZN.L": "AZNl_UK_EQ", "HSBA.L": "HSBAl_UK_EQ", "ULVR.L": "ULVRl_UK_EQ",
+    "BP.L": "BPl_UK_EQ", "GSK.L": "GSKl_UK_EQ", "BARC.L": "BARCl_UK_EQ", "SAP.DE": "SAPd_DE_EQ",
+    "SIE.DE": "SIEd_DE_EQ", "ALV.DE": "ALVd_DE_EQ", "AIR.DE": "AIRd_DE_EQ", "DTE.DE": "DTEd_DE_EQ",
+    "BMW.DE": "BMWd_DE_EQ", "BAS.DE": "BASd_DE_EQ", "MC.PA": "MCp_FR_EQ", "OR.PA": "ORp_FR_EQ",
+    "TTE.PA": "TTEp_FR_EQ", "RMS.PA": "RMSp_FR_EQ", "ASML.AS": "ASMLa_NL_EQ", "INGA.AS": "INGAa_NL_EQ",
+    "PRX.AS": "PRXa_NL_EQ"
 }
 
 def get_headers():
@@ -161,7 +179,7 @@ def log_scan_audit(ticker: str, price: float, trend_pass: bool, pullback_pass: b
         print(f"[ERROR] Failed writing to DB audit log: {e}")
 
 # -----------------------------------------------------------------------------
-# 3. Market Open & Calendar Guard
+# 3. Market Open & Quant Regime Guards
 # -----------------------------------------------------------------------------
 def is_market_open() -> bool:
     try:
@@ -186,7 +204,65 @@ def is_market_open() -> bool:
             return False
     except Exception as e:
         print(f"[ERROR] Market calendar check failed: {e}")
-        return True  # Fallback to allow execution if check fails
+        return True
+
+def check_macro_market_regime() -> bool:
+    """
+    Quant Guard 1: Macro Market Regime Guard (S&P 500 Filter)
+    Requires SPY Close >= SPY 200-Day SMA to allow long pullback entries.
+    """
+    try:
+        spy = yf.Ticker("SPY")
+        df = spy.history(period="1y", interval="1d")
+        if df.empty or len(df) < 200:
+            return True
+        df['SMA200'] = df['Close'].rolling(window=200).mean()
+        current_close = float(df['Close'].iloc[-1])
+        sma200 = float(df['SMA200'].iloc[-1])
+        is_bullish = current_close >= sma200
+        status_str = "BULLISH (Longs Allowed)" if is_bullish else "BEARISH/NEUTRAL (Longs Paused)"
+        print(f"[*] Macro Market Guard (SPY): Price=${current_close:.2f} | 200 SMA=${sma200:.2f} -> Regime: {status_str}")
+        return is_bullish
+    except Exception as e:
+        print(f"[WARNING] Macro regime check exception: {e}")
+        return True
+
+def check_daily_trend_alignment(yf_symbol: str) -> bool:
+    """
+    Quant Guard 2: Multi-Timeframe Alignment (Daily Chart)
+    Requires Daily 20 EMA > Daily 50 SMA to confirm macro stock uptrend.
+    """
+    try:
+        stock = yf.Ticker(yf_symbol)
+        df = stock.history(period="6m", interval="1d")
+        if df.empty or len(df) < 50:
+            return True
+        df['EMA20'] = df['Close'].ewm(span=20, adjust=False).mean()
+        df['SMA50'] = df['Close'].rolling(window=50).mean()
+        last_bar = df.iloc[-1]
+        return bool(last_bar['EMA20'] > last_bar['SMA50'])
+    except Exception:
+        return True
+
+def get_sector_position_count(sector: str) -> int:
+    """
+    Quant Guard 4: Sector Risk Concentration Cap
+    Counts current open positions in the database belonging to a specific sector.
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT yf_symbol FROM trades WHERE status = 'OPEN'")
+        open_trades = cursor.fetchall()
+        conn.close()
+        count = 0
+        for t in open_trades:
+            sym = t[0]
+            if SECTOR_MAP.get(sym, "Other") == sector:
+                count += 1
+        return count
+    except Exception:
+        return 0
 
 # -----------------------------------------------------------------------------
 # 4. Trading 212 Metadata & API Helpers
@@ -253,7 +329,6 @@ def resolve_t212_ticker(yf_symbol: str) -> str:
         if mapped in METADATA_CACHE:
             return mapped
 
-    # Dynamic fallback lookup in metadata
     clean_symbol = yf_symbol.replace(".L", "").replace(".DE", "").replace(".PA", "").replace(".AS", "")
     for t212_ticker in METADATA_CACHE:
         if t212_ticker.startswith(clean_symbol + "_"):
@@ -317,9 +392,9 @@ def get_fx_rate_to_gbp(currency: str) -> float:
         return 1.0
     
     fx_map = {
-        "USD": 0.78,  # $1 USD = £0.78 GBP
-        "EUR": 0.85,  # €1 EUR = £0.85 GBP
-        "GBX": 0.01   # 1 Pence = £0.01 GBP
+        "USD": 0.78,
+        "EUR": 0.85,
+        "GBX": 0.01
     }
     return fx_map.get(currency, 1.0)
 
@@ -444,8 +519,8 @@ def manage_open_position_exits(dry_run: bool = False):
                 if closed_bar['EMA20'] < closed_bar['SMA50']:
                     trend_breakdown = True
                     print(f"   [TECHNICAL SELL SIGNAL] {ticker}: EMA20 (${closed_bar['EMA20']:.2f}) crossed below SMA50 (${closed_bar['SMA50']:.2f})!")
-        except Exception as e:
-            pass  # Fallback gracefully if yfinance temporary timeout
+        except Exception:
+            pass
 
         # 3. Check Exit Triggers
         hit_stop = current_price <= stop_price
@@ -490,11 +565,16 @@ def manage_open_position_exits(dry_run: bool = False):
 # -----------------------------------------------------------------------------
 def run_strategy_b_scan(watchlist: list, dry_run: bool = False):
     print("\n=======================================================================")
-    print("[BOT] STARTING STRATEGY B SCAN CYCLE")
+    print("[BOT] STARTING ENHANCED QUANT STRATEGY B SCAN CYCLE")
     print("=======================================================================")
     
     init_database()
     init_csv_logs()
+
+    # Quant Guard 1: Macro Market Regime Check
+    if not check_macro_market_regime():
+        print("[MACRO REJECT] S&P 500 is in a macro downtrend (SPY < 200 SMA). Pausing long scans to preserve capital.")
+        return
 
     summary = fetch_account_summary()
     if not summary:
@@ -516,7 +596,7 @@ def run_strategy_b_scan(watchlist: list, dry_run: bool = False):
     active_tickers = [p.get("ticker") for p in open_pos]
 
     for yf_symbol in watchlist:
-        time.sleep(0.3)
+        time.sleep(0.2)
         t212_ticker = resolve_t212_ticker(yf_symbol)
         meta = METADATA_CACHE.get(t212_ticker, {
             "minTradeSize": 0.0001,
@@ -528,6 +608,18 @@ def run_strategy_b_scan(watchlist: list, dry_run: bool = False):
             print(f"\n[SKIP] {t212_ticker} ({yf_symbol}): Position already open.")
             log_scan_audit(t212_ticker, 0.0, False, False, False, "NO_INVESTMENT", "Position already open")
             continue
+
+        # Quant Guard 4: Sector Concentration Cap (Max 2 positions per sector)
+        sector = SECTOR_MAP.get(yf_symbol, "Other")
+        if sector != "Other":
+            open_sector_count = get_sector_position_count(sector)
+            if open_sector_count >= 2:
+                print(f"\n[SKIP] {t212_ticker} ({yf_symbol}): Sector concentration cap reached (Max 2 open {sector} positions).")
+                log_scan_audit(t212_ticker, 0.0, False, False, False, "NO_INVESTMENT", f"Sector cap reached ({sector})")
+                continue
+
+        # Quant Guard 2: Multi-Timeframe Alignment Check (Daily Chart 20 EMA > 50 SMA)
+        daily_trend_pass = check_daily_trend_alignment(yf_symbol)
 
         try:
             stock = yf.Ticker(yf_symbol)
@@ -555,13 +647,18 @@ def run_strategy_b_scan(watchlist: list, dry_run: bool = False):
             )
             df['ATR14'] = df['TR'].rolling(window=14).mean()
 
+            # Quant Guard 3: Volume Decay Confirmation
+            df['Vol_SMA20'] = df['Volume'].rolling(window=20).mean()
             closed_bar = df.iloc[-2]
             recent_bars = df.iloc[-6:-1]
 
             # Filters
-            trend_pass = bool(closed_bar['EMA20'] > closed_bar['SMA50'])
+            intraday_trend_pass = bool(closed_bar['EMA20'] > closed_bar['SMA50'])
             pullback_pass = bool((recent_bars['Low'] <= (recent_bars['EMA20'] * 1.001)).any())
             reversal_pass = bool(closed_bar['Close'] > closed_bar['Open'])
+            volume_pass = bool(closed_bar['Volume'] <= (closed_bar['Vol_SMA20'] * 1.2))  # Low volume on pullback
+
+            trend_pass = daily_trend_pass and intraday_trend_pass
 
             current_close = float(closed_bar['Close'])
             current_low = float(closed_bar['Low'])
@@ -570,12 +667,12 @@ def run_strategy_b_scan(watchlist: list, dry_run: bool = False):
             atr14 = float(closed_bar['ATR14'])
 
             currency_symbol = "£" if is_uk_pence or meta.get("currencyCode") == "GBP" else "$"
-            print(f"\n[SCAN] Ticker: {t212_ticker} ({yf_symbol})")
+            print(f"\n[SCAN] Ticker: {t212_ticker} ({yf_symbol}) [Sector: {sector}]")
             print(f"   Price: {currency_symbol}{current_close:.2f} | 20 EMA: {currency_symbol}{ema20:.2f} | 50 SMA: {currency_symbol}{sma50:.2f} | ATR(14): {currency_symbol}{atr14:.2f}")
-            print(f"   Filters -> Trend: {trend_pass} | Pullback: {pullback_pass} | Reversal: {reversal_pass}")
+            print(f"   Quant Filters -> Daily Trend: {daily_trend_pass} | Intraday Trend: {intraday_trend_pass} | Pullback: {pullback_pass} | Reversal: {reversal_pass} | Volume Decay: {volume_pass}")
 
-            if trend_pass and pullback_pass and reversal_pass:
-                print(f"--> [SIGNAL TRIGGERED] Buy signal on {t212_ticker}!")
+            if trend_pass and pullback_pass and reversal_pass and volume_pass:
+                print(f"--> [SIGNAL TRIGGERED] Quant Buy signal on {t212_ticker}!")
                 
                 entry_price = current_close
                 stop_price = current_low - (1.5 * atr14)
@@ -613,7 +710,7 @@ def run_strategy_b_scan(watchlist: list, dry_run: bool = False):
                         conn.commit()
                         conn.close()
 
-                        log_scan_audit(t212_ticker, current_close, trend_pass, pullback_pass, reversal_pass, "INVESTED", "All filters passed - Order placed")
+                        log_scan_audit(t212_ticker, current_close, trend_pass, pullback_pass, reversal_pass, "INVESTED", "All quant filters passed - Order placed")
                     else:
                         log_scan_audit(t212_ticker, current_close, trend_pass, pullback_pass, reversal_pass, "ERROR", f"API Error: {response_data}")
                 else:
@@ -621,9 +718,11 @@ def run_strategy_b_scan(watchlist: list, dry_run: bool = False):
                     log_scan_audit(t212_ticker, current_close, trend_pass, pullback_pass, reversal_pass, "NO_INVESTMENT", "Share size failed constraints")
             else:
                 reasons = []
-                if not trend_pass: reasons.append("Failed Trend")
+                if not daily_trend_pass: reasons.append("Failed Daily Macro Trend")
+                if not intraday_trend_pass: reasons.append("Failed Intraday Trend")
                 if not pullback_pass: reasons.append("Failed Pullback")
                 if not reversal_pass: reasons.append("Failed Reversal")
+                if not volume_pass: reasons.append("Failed Volume Decay (High Selling Vol)")
                 reason_str = " | ".join(reasons)
                 print(f"   [NO INVESTMENT] Reason: {reason_str}")
                 log_scan_audit(t212_ticker, current_close, trend_pass, pullback_pass, reversal_pass, "NO_INVESTMENT", reason_str)
@@ -635,8 +734,51 @@ def run_strategy_b_scan(watchlist: list, dry_run: bool = False):
     print("\n=======================================================================")
     print("[BOT] SCAN CYCLE COMPLETED")
     print("=======================================================================")
+
 # -----------------------------------------------------------------------------
-# 8. Entrypoint & Daemon Loop
+# 8. Quant Performance Analytics Scorecard
+# -----------------------------------------------------------------------------
+def print_performance_stats():
+    """Quant Guard 5: Performance & Expectancy Scorecard."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT realized_pnl, status FROM trades WHERE status LIKE 'CLOSED_%'")
+    rows = cursor.fetchall()
+    conn.close()
+
+    if not rows:
+        print("\n=======================================================================")
+        print("[QUANT STATS] SYSTEMATIC PERFORMANCE ANALYTICS SCORECARD")
+        print("=======================================================================")
+        print("[*] No closed historical trades recorded in database yet.")
+        print("=======================================================================\n")
+        return
+
+    pnls = [r[0] for r in rows if r[0] is not None]
+    total_trades = len(pnls)
+    wins = [p for p in pnls if p > 0]
+    losses = [p for p in pnls if p <= 0]
+
+    win_rate = (len(wins) / total_trades) * 100.0 if total_trades > 0 else 0.0
+    total_pnl = sum(pnls)
+    avg_win = sum(wins) / len(wins) if wins else 0.0
+    avg_loss = abs(sum(losses) / len(losses)) if losses else 0.0
+    profit_factor = sum(wins) / abs(sum(losses)) if losses and sum(losses) != 0 else (sum(wins) if wins else 0.0)
+    expectancy = ((win_rate / 100.0) * avg_win) - (((100.0 - win_rate) / 100.0) * avg_loss)
+
+    print("\n=======================================================================")
+    print("[QUANT STATS] SYSTEMATIC PERFORMANCE ANALYTICS SCORECARD")
+    print("=======================================================================")
+    print(f"[*] Total Closed Trades: {total_trades}")
+    print(f"[*] Win Rate: {win_rate:.1f}% ({len(wins)} Wins / {len(losses)} Losses)")
+    print(f"[*] Total Realized PnL: ${total_pnl:,.2f}")
+    print(f"[*] Average Win: ${avg_win:,.2f} | Average Loss: ${avg_loss:,.2f}")
+    print(f"[*] Profit Factor: {profit_factor:.2f}")
+    print(f"[*] Trade Expectancy (E): ${expectancy:,.2f} per trade")
+    print("=======================================================================\n")
+
+# -----------------------------------------------------------------------------
+# 9. Entrypoint & Daemon Loop
 # -----------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(description="Strategy B Automated Trading Engine")
@@ -645,10 +787,15 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Simulate signals and orders without API submission.")
     parser.add_argument("--test-connection", action="store_true", help="Test Trading 212 API connection and exit.")
     parser.add_argument("--show-watchlist", action="store_true", help="Print active watchlist tickers and exit.")
+    parser.add_argument("--stats", action="store_true", help="Print systematic performance scorecard and exit.")
     args = parser.parse_args()
 
     init_database()
     init_csv_logs()
+
+    if args.stats:
+        print_performance_stats()
+        sys.exit(0)
 
     # Expanded Default Watchlist (Top US MegaCaps + Nasdaq 100 + Large/Mid-Cap Leaders)
     default_watchlist = [
@@ -708,6 +855,8 @@ def main():
         print("[DAEMON MODE] Starting continuous trading engine...")
         print("  --> Exit Manager: High-Frequency 10-Second Monitor Active")
         print("  --> Buy Scanner: 5-Minute Candle Scan Active")
+        print("  --> Macro Guard: S&P 500 (SPY > 200 SMA) Guard Active")
+        print("  --> Sector Guard: Max 2 Open Positions Per Sector Active")
         import schedule
         
         # 1. High-Frequency Exit Monitoring (Runs every 10 seconds)
