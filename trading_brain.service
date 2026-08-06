@@ -1,0 +1,21 @@
+[Unit]
+Description=Trading Brain Strategy B Automated Trading Engine Daemon
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/trading_brain
+ExecStart=/opt/trading_brain/venv/bin/python /opt/trading_brain/automate_strategy_b_trading212.py --daemon
+Restart=always
+RestartSec=15
+Environment=PYTHONUNBUFFERED=1
+
+# Security Sandbox (Optional hardening)
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target
