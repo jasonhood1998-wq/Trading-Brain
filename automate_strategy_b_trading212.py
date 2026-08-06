@@ -261,13 +261,23 @@ def resolve_t212_ticker(yf_symbol: str) -> str:
 
     return f"{clean_symbol}_US_EQ"
 
-def fetch_account_summary():
-    try:
-        res = requests.get(f"{BASE_URL}/equity/account/summary", headers=get_headers(), timeout=10)
-        if res.status_code == 200:
-            return res.json()
-    except Exception as e:
-        print(f"[ERROR] fetch_account_summary failed: {e}")
+def fetch_account_summary(retries=3):
+    for attempt in range(retries):
+        try:
+            res = requests.get(f"{BASE_URL}/equity/account/summary", headers=get_headers(), timeout=10)
+            if res.status_code == 200:
+                data = res.json()
+                if "free" not in data and "cash" in data and isinstance(data["cash"], dict):
+                    data["free"] = data["cash"].get("availableToTrade", data["cash"].get("free", 0.0))
+                return data
+            elif res.status_code == 429:
+                print(f"[RATE LIMIT] Account summary API rate limited. Retrying in {2 ** attempt}s...")
+                time.sleep(2 ** attempt)
+            else:
+                print(f"[ERROR] fetch_account_summary returned HTTP {res.status_code}: {res.text}")
+        except Exception as e:
+            print(f"[ERROR] fetch_account_summary failed: {e}")
+        time.sleep(1)
     return None
 
 def fetch_open_positions():
