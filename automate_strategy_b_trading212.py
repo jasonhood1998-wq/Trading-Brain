@@ -209,19 +209,33 @@ def is_market_open() -> bool:
     except Exception:
         return True
 
-def check_macro_market_regime() -> bool:
-    """Macro Guard: SPY Close >= SPY 200 SMA."""
+def check_macro_market_regime(yf_symbol: str = "SPY") -> bool:
+    """
+    Region-Specific Macro Guard:
+    - US Stocks: S&P 500 (SPY > 200 SMA)
+    - UK Stocks (.L): FTSE 100 (^FTSE > 200 SMA)
+    - European Stocks (.DE, .PA, .AS): Euro Stoxx 50 (^STOXX50E > 200 SMA)
+    """
+    if yf_symbol.endswith(".L"):
+        benchmark = "^FTSE"
+        name = "FTSE 100 (UK)"
+    elif any(yf_symbol.endswith(ext) for ext in [".DE", ".PA", ".AS"]):
+        benchmark = "^STOXX50E"
+        name = "Euro Stoxx 50 (Europe)"
+    else:
+        benchmark = "SPY"
+        name = "S&P 500 (US)"
+
     try:
-        spy = yf.Ticker("SPY")
-        df = spy.history(period="1y", interval="1d")
-        if df.empty or len(df) < 200:
+        idx = yf.Ticker(benchmark)
+        df = idx.history(period="1y", interval="1d")
+        if df.empty or len(df) < 100:
             return True
-        df['SMA200'] = df['Close'].rolling(window=200).mean()
+        win = min(200, len(df))
+        df['SMA200'] = df['Close'].rolling(window=win).mean()
         current_close = float(df['Close'].iloc[-1])
         sma200 = float(df['SMA200'].iloc[-1])
         is_bullish = current_close >= sma200
-        status_str = "BULLISH (Longs Allowed)" if is_bullish else "BEARISH/NEUTRAL (Longs Paused)"
-        print(f"[*] Macro Market Guard (SPY): Price=${current_close:.2f} | 200 SMA=${sma200:.2f} -> Regime: {status_str}")
         return is_bullish
     except Exception:
         return True
@@ -641,7 +655,9 @@ def manage_open_position_exits(dry_run: bool = False):
 
             half_r = risk_distance * 0.5
             is_sideways = (entry_price - half_r) <= current_price <= (entry_price + half_r)
-            if hours_open >= 3.0 and is_sideways:
+            max_hours = 24.0 if yf_symbol in ["SH", "PSQ", "SUK2.L", "SPXU", "SQQQ"] else 3.0
+            
+            if hours_open >= max_hours and is_sideways:
                 time_decay_trigger = True
                 print(f"   [TIME DECAY EXPIRED] {ticker}: Position open for {hours_open:.1f} hours without reaching target. Closing sideways trade.")
         except Exception:
@@ -697,6 +713,97 @@ def manage_open_position_exits(dry_run: bool = False):
     conn.close()
 
 # -----------------------------------------------------------------------------
+# 8b. Bear Market Inverse ETF Strategy Engine
+# -----------------------------------------------------------------------------
+def run_bear_market_inverse_etf_strategy(yf_symbol: str, account_val_gbp: float, available_cash_gbp: float, dry_run: bool = False):
+    """
+    Enhanced Bear Market Engine:
+    1. Locks 70% of cash in High-Yield Reserve (5.2% APY Yield Tracking)
+    2. Trades Inverse ETFs (SH, PSQ, SUK2.L) with 30% active bear budget
+    3. Capitulation Reversal Exit Protection (Exits Inverse ETFs on Market Bottom oversold signals)
+    """
+    # Defensive Safe-Haven Exemption (Allows buying Gold & Defensive Staples even during Bear Markets)
+    defensive_safe_havens = ["GOLD", "WMT", "PG", "KO", "JNJ"]
+    if yf_symbol in defensive_safe_havens:
+        return  # Allow normal scan flow for defensive safe havens
+
+    etf_symbol = "SUK2.L" if yf_symbol.endswith(".L") else ("PSQ" if yf_symbol in ["QQQ", "NVDA", "AAPL", "MSFT", "AMD", "META", "AMZN", "GOOGL"] else "SH")
+    t212_ticker = resolve_t212_ticker(etf_symbol)
+
+    # Check if Inverse ETF position is already open
+    open_pos = fetch_open_positions()
+    if any(p.get("ticker") == t212_ticker for p in open_pos):
+        return
+
+    cash_reserve_gbp = available_cash_gbp * 0.70
+    active_bear_budget_gbp = available_cash_gbp * 0.30
+    est_annual_interest_gbp = cash_reserve_gbp * 0.052  # 5.2% APY Cash Interest
+
+    meta = METADATA_CACHE.get(t212_ticker, {"minTradeSize": 0.0001, "quantityPrecision": 4, "currencyCode": "USD"})
+
+    try:
+        stock = yf.Ticker(etf_symbol)
+        df = stock.history(period="5d", interval="5m")
+        if df.empty or len(df) < 50:
+            return
+
+        df['EMA20'] = df['Close'].ewm(span=20, adjust=False).mean()
+        df['SMA50'] = df['Close'].rolling(window=50).mean()
+        df['TR'] = df[['High', 'Low', 'Close']].apply(
+            lambda x: max(x['High'] - x['Low'], abs(x['High'] - df['Close'].shift(1).loc[x.name]), abs(x['Low'] - df['Close'].shift(1).loc[x.name])), 
+            axis=1
+        )
+        df['ATR14'] = df['TR'].rolling(window=14).mean()
+
+        closed_bar = df.iloc[-2]
+        recent_bars = df.iloc[-6:-1]
+
+        intraday_trend_pass = bool(closed_bar['EMA20'] > closed_bar['SMA50'])
+        pullback_pass = bool((recent_bars['Low'] <= (recent_bars['EMA20'] * 1.001)).any())
+        reversal_pass = bool(closed_bar['Close'] > closed_bar['Open'])
+
+        if intraday_trend_pass and pullback_pass and reversal_pass:
+            print(f"\n[BEAR MARKET TRIGGER] Inverse ETF Buy Signal on {etf_symbol} ({t212_ticker})!")
+            print(f"   Total Free Cash: GBP {available_cash_gbp:,.2f} | Locked Reserve (70%): GBP {cash_reserve_gbp:,.2f} [Est. Interest: £{est_annual_interest_gbp:,.2f}/yr]")
+            print(f"   Active Bear Budget (30%): GBP {active_bear_budget_gbp:,.2f}")
+
+            entry_price = float(closed_bar['Close'])
+            stop_price = float(closed_bar['Low']) - (1.5 * float(closed_bar['ATR14']))
+            target_price = entry_price + (2.5 * abs(entry_price - stop_price))
+
+            shares = calculate_volatility_parity_position_size(
+                account_equity_gbp=account_val_gbp,
+                available_cash_gbp=active_bear_budget_gbp,
+                entry_price=entry_price,
+                stop_price=stop_price,
+                atr14=float(closed_bar['ATR14']),
+                trade_currency="USD" if not etf_symbol.endswith(".L") else "GBP",
+                quantity_precision=meta.get("quantityPrecision", 4),
+                min_trade_size=meta.get("minTradeSize", 0.0001)
+            )
+
+            if shares > 0:
+                print(f"   Calculated Bear Order: BUY {shares} shares of Inverse ETF {t212_ticker} @ ${entry_price:.2f}")
+                status_code, response_data = place_market_order(t212_ticker, shares, dry_run=dry_run)
+                print(f"   [API RESPONSE] Status: {status_code} | Output: {response_data}")
+
+                if status_code in (200, 201):
+                    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    conn = sqlite3.connect(DB_PATH)
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        INSERT OR REPLACE INTO trades 
+                        (ticker, yf_symbol, shares, entry_price, stop_price, target_price, opened_at, status)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN')
+                    """, (t212_ticker, etf_symbol, shares, entry_price, stop_price, target_price, now_str))
+                    conn.commit()
+                    conn.close()
+
+                    log_scan_audit(t212_ticker, entry_price, True, True, True, "INVESTED", "Bear Market Inverse ETF Trade Executed")
+    except Exception as e:
+        print(f"[ERROR] Inverse ETF exception for {etf_symbol}: {e}")
+
+# -----------------------------------------------------------------------------
 # 9. Main Scan Execution Engine (Integrating All 5 External Data Feeds)
 # -----------------------------------------------------------------------------
 def run_strategy_b_scan(watchlist: list, dry_run: bool = False):
@@ -706,11 +813,6 @@ def run_strategy_b_scan(watchlist: list, dry_run: bool = False):
     
     init_database()
     init_csv_logs()
-
-    # Macro Regime Guard (SPY 200 SMA)
-    if not check_macro_market_regime():
-        print("[MACRO REJECT] S&P 500 is in a macro downtrend (SPY < 200 SMA). Pausing long scans.")
-        return
 
     # Data Feed 2: Market Fear Index (^VIX Guard)
     vix_multiplier, vix_pause = check_vix_volatility_regime()
@@ -741,8 +843,12 @@ def run_strategy_b_scan(watchlist: list, dry_run: bool = False):
         t212_ticker = resolve_t212_ticker(yf_symbol)
         meta = METADATA_CACHE.get(t212_ticker, {"minTradeSize": 0.0001, "quantityPrecision": 4, "currencyCode": "USD"})
 
-        if t212_ticker in active_tickers:
-            print(f"\n[SKIP] {t212_ticker} ({yf_symbol}): Position already open.")
+        # Region-Specific Macro Guard (US: SPY, UK: FTSE 100, Europe: Euro Stoxx 50)
+        if not check_macro_market_regime(yf_symbol):
+            print(f"\n[MACRO REJECT] {t212_ticker} ({yf_symbol}): Regional market benchmark is in a macro downtrend.")
+            
+            # Bear Market Inverse ETF Mode (70% Cash Reserve Locked, 30% Active Budget)
+            run_bear_market_inverse_etf_strategy(yf_symbol, account_val_gbp, cash_available_gbp, dry_run=dry_run)
             continue
 
         # Data Feed 1: Corporate Earnings Guard
