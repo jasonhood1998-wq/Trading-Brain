@@ -1296,14 +1296,16 @@ def print_open_positions_and_exit_conditions():
             api_avg = pos.get("averagePrice") or pos.get("initialFillPrice") or pos.get("buyPrice") or 0.0
             fx_ppl = pos.get("fxPpl", 0.0)
 
-            # PRIORITY CHAIN FOR ENTRY PRICE WITH DIAGNOSTIC TRACING
+            # PRIORITY CHAIN FOR ENTRY PRICE WITH 0.15% FX FEE MULTIPLIER
             source_tag = "UNKNOWN"
+            fx_fee_mult = 1.0015 if t212_ticker.endswith("_US_EQ") or t212_ticker.endswith("_DE_EQ") or t212_ticker.endswith("_FR_EQ") else 1.0
+
             if t212_ticker in order_fills and order_fills[t212_ticker] > 0:
-                entry_price = order_fills[t212_ticker]
-                source_tag = "Trading 212 Order History API (/equity/history/orders)"
+                entry_price = round(order_fills[t212_ticker] * fx_fee_mult, 2)
+                source_tag = "Trading 212 Order History API (+0.15% FX Fee)"
             elif api_avg > 0:
-                entry_price = api_avg
-                source_tag = "Trading 212 Position Payload (averagePrice)"
+                entry_price = round(api_avg * fx_fee_mult, 2)
+                source_tag = "Trading 212 Position Payload (+0.15% FX Fee)"
             elif t212_ticker in manual_entries and manual_entries[t212_ticker] > 0:
                 entry_price = manual_entries[t212_ticker]
                 source_tag = f"Bilateral Vault (manual_entries.json)"
@@ -1315,8 +1317,9 @@ def print_open_positions_and_exit_conditions():
                 fx_rate = get_fx_rate_to_gbp("USD")
                 if shares > 0 and fx_rate > 0 and current_price > 0 and pure_stock_pnl_gbp != 0:
                     skew_adj = pure_stock_pnl_gbp / (shares * fx_rate)
-                    entry_price = round(current_price - skew_adj, 2)
-                    source_tag = f"Zero-Skew PnL Formula (CurrentPrice={current_price}, PnL={pure_stock_pnl_gbp:.2f})"
+                    raw_entry = current_price - skew_adj
+                    entry_price = round(raw_entry * fx_fee_mult, 2)
+                    source_tag = f"Zero-Skew PnL Formula (+0.15% FX Fee, PnL={pure_stock_pnl_gbp:.2f})"
                 else:
                     entry_price = current_price if current_price > 0 else 100.0
                     source_tag = "Current Price Fallback"
