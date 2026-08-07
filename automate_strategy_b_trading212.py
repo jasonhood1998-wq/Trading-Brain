@@ -682,6 +682,27 @@ def fetch_open_positions():
         print(f"[API WARN] Failed to connect to Trading 212 API: {e}")
     return []
 
+def fetch_order_history_fill_prices() -> dict:
+    """
+    Queries Trading 212 API Order History endpoint (/equity/history/orders)
+    to extract true executed fillPrice for all filled orders!
+    """
+    fill_prices = {}
+    try:
+        res = requests.get(f"{BASE_URL}/equity/history/orders?limit=50", headers=get_headers(), timeout=10)
+        if res.status_code == 200:
+            data = res.json()
+            items = data.get("items", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
+            for item in items:
+                if isinstance(item, dict):
+                    ticker = item.get("ticker") or item.get("instrumentCode")
+                    fill_p = item.get("fillPrice") or item.get("averagePrice") or item.get("price")
+                    if ticker and fill_p and float(fill_p) > 0:
+                        fill_prices[ticker] = float(fill_p)
+    except Exception:
+        pass
+    return fill_prices
+
 def place_market_order(ticker: str, quantity: float, dry_run: bool = False):
     if dry_run:
         print(f"   [DRY-RUN] Would submit Market Order: Ticker={ticker}, Quantity={quantity}")
@@ -1159,31 +1180,41 @@ def print_performance_stats():
 MANUAL_ENTRIES_PATH = os.path.join(SCRIPT_DIR, "manual_entries.json")
 
 def load_manual_entries() -> dict:
+    defaults = {
+        "PEP_US_EQ": 137.92, "PEP": 137.92,
+        "SNOW_US_EQ": 327.28, "SNOW": 327.28,
+        "ABBV_US_EQ": 245.46, "ABBV": 245.46,
+        "BABA_US_EQ": 128.52, "BABA": 128.52,
+        "PLTR_US_EQ": 170.71, "PLTR": 170.71,
+        "MRK_US_EQ": 128.58, "MRK": 128.58,
+        "ZS_US_EQ": 167.65, "ZS": 167.65,
+        "MS_US_EQ": 216.01, "MS": 216.01,
+        "MCD_US_EQ": 274.68, "MCD": 274.68,
+        "AAPL_US_EQ": 312.50, "AAPL": 312.50,
+        "JNJ_US_EQ": 256.90, "JNJ": 256.90,
+        "ABT_US_EQ": 107.47, "ABT": 107.47,
+        "CSCO_US_EQ": 121.51, "CSCO": 121.51,
+        "AVGO_US_EQ": 424.68, "AVGO": 424.68,
+        "LLY_US_EQ": 1177.75, "LLY": 1177.75
+    }
     if os.path.exists(MANUAL_ENTRIES_PATH):
         try:
             with open(MANUAL_ENTRIES_PATH, "r") as f:
-                return json.load(f)
+                disk_entries = json.load(f)
+                defaults.update(disk_entries)
         except Exception:
             pass
-    return {
-        "PEP_US_EQ": 137.92,
-        "MCD_US_EQ": 274.68,
-        "AAPL_US_EQ": 312.50,
-        "JNJ_US_EQ": 256.90,
-        "ABT_US_EQ": 107.47,
-        "CSCO_US_EQ": 121.51,
-        "AVGO_US_EQ": 424.68,
-        "LLY_US_EQ": 1177.75
-    }
+    return defaults
 
 def save_manual_entry(ticker: str, entry_price: float):
     entries = load_manual_entries()
-    entries[ticker] = round(entry_price, 2)
-    try:
-        with open(MANUAL_ENTRIES_PATH, "w") as f:
-            json.dump(entries, f, indent=2)
-    except Exception:
-        pass
+    if ticker not in entries or entries[ticker] <= 0:
+        entries[ticker] = round(entry_price, 2)
+        try:
+            with open(MANUAL_ENTRIES_PATH, "w") as f:
+                json.dump(entries, f, indent=2)
+        except Exception:
+            pass
 
 def print_open_positions_and_exit_conditions():
     """
@@ -1193,11 +1224,10 @@ def print_open_positions_and_exit_conditions():
     """
     init_database()
     api_positions = fetch_open_positions()
+    order_fills = fetch_order_history_fill_prices()
 
     now_dt = datetime.datetime.now()
     now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
-
-    manual_entries = load_manual_entries()
 
     # Step 1: Read existing DB rows
     conn = sqlite3.connect(DB_PATH, timeout=10)
@@ -1243,14 +1273,24 @@ def print_open_positions_and_exit_conditions():
 
             api_avg = pos.get("averagePrice") or pos.get("initialFillPrice") or pos.get("buyPrice") or 0.0
 
-            # Compute pos_val reliably in GBP
-            pos_val = pos.get("value") or (current_price * shares * 0.78) or 0.0
-            if api_avg <= 0 and current_price > 0:
-                if pos_val > 0 and ppl != 0:
-                    ratio = 1.0 - (ppl / pos_val)
-                    api_avg = round(current_price * ratio, 2)
+            # PRIORITY CHAIN FOR ENTRY PRICE (AUTOMATIC - NO MANUAL FILES)
+            # Priority 1: Use locked entry price from SQLite database
+            if t212_ticker in db_rows and db_rows[t212_ticker][3] > 0:
+                entry_price = db_rows[t212_ticker][3]
+            # Priority 2: Use executed fillPrice from Trading 212 API Order History
+            elif t212_ticker in order_fills:
+                entry_price = order_fills[t212_ticker]
+            # Priority 3: Use API averagePrice if provided
+            elif api_avg > 0:
+                entry_price = api_avg
+            # Priority 4: Reverse PnL Math Equation using Live FX Rate
+            else:
+                pos_val_gbp = pos.get("value") or (current_price * shares * get_fx_rate_to_gbp("USD")) or 0.0
+                if pos_val_gbp > 0 and ppl != 0 and current_price > 0:
+                    ratio = 1.0 - (ppl / pos_val_gbp)
+                    entry_price = round(current_price * ratio, 2)
                 else:
-                    api_avg = round(current_price, 2)
+                    entry_price = current_price if current_price > 0 else 100.0
 
             # Check created timestamp from Trading 212 API
             created_ts = pos.get("created") or pos.get("initialFillDate")
@@ -1261,21 +1301,6 @@ def print_open_positions_and_exit_conditions():
                     opened_at_str = dt_parsed.strftime("%Y-%m-%d %H:%M:%S")
                 except Exception:
                     pass
-
-            # PRIORITY CHAIN FOR ENTRY PRICE
-            if t212_ticker in manual_entries:
-                entry_price = manual_entries[t212_ticker]
-            elif t212_ticker in db_rows and db_rows[t212_ticker][3] > 0:
-                entry_price = db_rows[t212_ticker][3]
-            elif api_avg > 0:
-                entry_price = api_avg
-                # Lock calculated entry into manual_entries vault permanently
-                save_manual_entry(t212_ticker, entry_price)
-                save_manual_entry(yf_symbol, entry_price)
-            else:
-                entry_price = current_price if current_price > 0 else 100.0
-                save_manual_entry(t212_ticker, entry_price)
-                save_manual_entry(yf_symbol, entry_price)
 
             if t212_ticker in db_rows and db_rows[t212_ticker][6]:
                 opened_at_str = db_rows[t212_ticker][6]
@@ -1296,13 +1321,12 @@ def print_open_positions_and_exit_conditions():
                     stop_price = round(entry_price * 0.98, 2)
                     target_price = round(entry_price * 1.05, 2)
 
-            # Sync to SQLite database
-            if entry_price > 0:
-                cur_lock.execute("""
-                    INSERT OR REPLACE INTO trades 
-                    (ticker, yf_symbol, shares, entry_price, stop_price, target_price, opened_at, status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN')
-                """, (t212_ticker, yf_symbol, shares, entry_price, stop_price, target_price, opened_at_str))
+            # Sync & Lock permanently to SQLite database
+            cur_lock.execute("""
+                INSERT OR REPLACE INTO trades 
+                (ticker, yf_symbol, shares, entry_price, stop_price, target_price, opened_at, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN')
+            """, (t212_ticker, yf_symbol, shares, entry_price, stop_price, target_price, opened_at_str))
 
         conn_lock.commit()
         conn_lock.close()
