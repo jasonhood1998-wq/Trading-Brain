@@ -370,8 +370,12 @@ def check_news_sentiment(yf_symbol: str) -> tuple[float, bool]:
 def check_sector_etf_alignment(yf_symbol: str) -> bool:
     """
     Data Feed 4: Sector ETF Momentum Alignment
-    Requires the Sector ETF (e.g. XLK for NVDA) to be trading above its 20 EMA.
+    Requires US Sector ETFs (e.g. XLK for NVDA) to be trading above their 20 EMA.
+    Non-US UK/European stocks skip US sector ETF filters.
     """
+    if yf_symbol.endswith(".L") or yf_symbol.endswith(".DE") or yf_symbol.endswith(".PA") or yf_symbol.endswith(".AS"):
+        return True  # Non-US stocks skip US sector ETF alignment filter
+
     try:
         sector = SECTOR_MAP.get(yf_symbol, "Other")
         etf = SECTOR_ETF_MAP.get(sector)
@@ -405,7 +409,7 @@ def get_ranked_watchlist_by_relative_strength(watchlist: list) -> list:
     print("\n[*] Sorting Watchlist by Relative Strength (RS) Priority vs S&P 500...")
     try:
         spy = yf.Ticker("SPY")
-        df_spy = spy.history(period="1m", interval="1d")
+        df_spy = spy.history(period="1mo", interval="1d")
         if df_spy.empty or len(df_spy) < 15:
             return watchlist
 
@@ -415,7 +419,7 @@ def get_ranked_watchlist_by_relative_strength(watchlist: list) -> list:
         for yf_symbol in watchlist:
             try:
                 stock = yf.Ticker(yf_symbol)
-                df_s = stock.history(period="1m", interval="1d")
+                df_s = stock.history(period="1mo", interval="1d")
                 if df_s.empty or len(df_s) < 15:
                     rs_scores.append((yf_symbol, -999.0))
                     continue
@@ -1122,7 +1126,7 @@ def main():
         "BAC", "XOM", "NFLX", "CRM", "CVX", "ABBV", "MRK", "KO", "PEP", "TMO",
         "CSCO", "MCD", "ABT", "DIS", "GE", "IBM", "INTC", "PM", "CAT", "TXN",
         "QCOM", "AMAT", "NOW", "PANW", "UBER", "MU", "GS", "MS", "AXP", "BLK",
-        "PLTR", "COIN", "SQ", "SHOP", "SPOT", "NET", "DDOG", "SNOW", "CRWD", "ZS",
+        "PLTR", "COIN", "XYZ", "SHOP", "SPOT", "NET", "DDOG", "SNOW", "CRWD", "ZS",
         "MDB", "ROKU", "DKNG", "SNAP", "PINS", "RBLX", "TWLO", "PATH", "AFRM", "UPST",
         "SMCI", "ARM", "APP", "CVNA", "HOOD", "ASTS", "IONQ", "MARA", "RIOT", "CLSK",
         "HIMS", "TOST", "DUOL", "SOFI", "CELH", "ON", "MPWR", "ENTG", "FSLR", "ENPH",
