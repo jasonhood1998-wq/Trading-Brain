@@ -1422,6 +1422,7 @@ def print_open_positions_and_exit_conditions():
             print(f"   --> Time Elapsed:   {hours_open:.1f} Hours Open")
         print(f"   --> Technical Exit: Triggers SELL if 20 EMA crosses below 50 SMA")
         print(f"   --> Data Source:    {source_tag}")
+        print(f"   --> RAW T212 Payload: {pos}")
 
     print("\n=======================================================================\n")
 
