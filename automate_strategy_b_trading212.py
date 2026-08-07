@@ -28,6 +28,7 @@ import zoneinfo
 import requests
 import numpy as np
 import pandas as pd
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import yfinance as yf
 import pandas_market_calendars as mcal
 from dotenv import load_dotenv
@@ -123,6 +124,8 @@ def get_headers():
 def init_database():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL;")
+    cursor.execute("PRAGMA synchronous=NORMAL;")
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS trades (
             ticker TEXT PRIMARY KEY,
@@ -234,11 +237,45 @@ def check_macro_market_regime(yf_symbol: str = "SPY") -> bool:
         win = min(200, len(df))
         df['SMA200'] = df['Close'].rolling(window=win).mean()
         current_close = float(df['Close'].iloc[-1])
-        sma200 = float(df['SMA200'].iloc[-1])
-        is_bullish = current_close >= sma200
         return is_bullish
     except Exception:
         return True
+
+def fetch_stock_5m_candles(yf_symbol: str) -> pd.DataFrame:
+    """
+    Dual-Provider Data Engine:
+    1. Primary: Tries official Finnhub REST API (if FINNHUB_API_KEY is present)
+    2. Fallback: Seamlessly falls back to yfinance if Finnhub key is missing or rate-limited!
+    """
+    finnhub_key = os.getenv("FINNHUB_API_KEY")
+    if finnhub_key:
+        try:
+            clean_sym = yf_symbol.replace(".L", "").replace(".DE", "").replace(".PA", "").replace(".AS", "")
+            now_ts = int(time.time())
+            start_ts = now_ts - (5 * 86400)
+            url = f"https://finnhub.io/api/v1/stock/candle?symbol={clean_sym}&resolution=5&from={start_ts}&to={now_ts}&token={finnhub_key}"
+            res = requests.get(url, timeout=5)
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("s") == "ok" and data.get("c"):
+                    df = pd.DataFrame({
+                        "Open": data["o"],
+                        "High": data["h"],
+                        "Low": data["l"],
+                        "Close": data["c"],
+                        "Volume": data["v"]
+                    })
+                    if not df.empty and len(df) >= 50:
+                        return df
+        except Exception:
+            pass
+
+    # Fallback Data Provider: yfinance
+    stock = yf.Ticker(yf_symbol)
+    df = stock.history(period="5d", interval="5m")
+    if yf_symbol.endswith(".L") and not df.empty:
+        df['Open'] /= 100.0; df['High'] /= 100.0; df['Low'] /= 100.0; df['Close'] /= 100.0
+    return df
 
 def check_vix_volatility_regime() -> tuple[float, bool]:
     """
@@ -873,14 +910,11 @@ def run_strategy_b_scan(watchlist: list, dry_run: bool = False):
             continue
 
         try:
-            stock = yf.Ticker(yf_symbol)
-            df = stock.history(period="5d", interval="5m")
+            df = fetch_stock_5m_candles(yf_symbol)
             if df.empty or len(df) < 50:
                 continue
 
             is_uk_pence = yf_symbol.endswith(".L")
-            if is_uk_pence:
-                df['Open'] /= 100.0; df['High'] /= 100.0; df['Low'] /= 100.0; df['Close'] /= 100.0
 
             df['EMA20'] = df['Close'].ewm(span=20, adjust=False).mean()
             df['SMA50'] = df['Close'].rolling(window=50).mean()
