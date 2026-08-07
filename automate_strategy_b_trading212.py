@@ -652,8 +652,10 @@ def fetch_open_positions():
         res = requests.get(f"{BASE_URL}/equity/positions", headers=get_headers(), timeout=10)
         if res.status_code == 200:
             return res.json()
-    except Exception:
-        pass
+        else:
+            print(f"[API WARN] /equity/positions returned HTTP {res.status_code}: {res.text[:100]}")
+    except Exception as e:
+        print(f"[API WARN] Failed to connect to Trading 212 API: {e}")
     return []
 
 def place_market_order(ticker: str, quantity: float, dry_run: bool = False):
