@@ -404,29 +404,43 @@ def check_sector_etf_alignment(yf_symbol: str) -> bool:
 # -----------------------------------------------------------------------------
 def get_ranked_watchlist_by_relative_strength(watchlist: list) -> list:
     """
-    Quant Priority Sorter: Ranks all 126 watchlist stocks by 20-day Relative Strength (RS) outperformance vs SPY.
-    Ensures market leaders are scanned FIRST on every cycle.
+    Quant Priority Sorter: Ranks all 126 watchlist stocks by Relative Strength (RS) outperformance vs their Regional Benchmark Index:
+    - US Stocks: vs SPY (S&P 500)
+    - UK Stocks (.L): vs ^FTSE (FTSE 100)
+    - EU Stocks (.DE, .PA, .AS): vs ^STOXX50E (Euro Stoxx 50)
     """
-    print("\n[*] Sorting Watchlist by Relative Strength (RS) Priority vs S&P 500...")
+    print("\n[*] Sorting Watchlist by Regional Relative Strength (RS) Priority...")
     try:
-        spy = yf.Ticker("SPY")
-        df_spy = spy.history(period="1mo", interval="1d")
-        if df_spy.empty or len(df_spy) < 15:
-            return watchlist
-
-        spy_ret = (df_spy['Close'].iloc[-1] - df_spy['Close'].iloc[0]) / df_spy['Close'].iloc[0]
+        benchmarks = {"SPY": 0.0, "^FTSE": 0.0, "^STOXX50E": 0.0}
+        for b_sym in benchmarks:
+            try:
+                b_ticker = yf.Ticker(b_sym)
+                df_b = b_ticker.history(period="1mo", interval="1d")
+                if not df_b.empty and len(df_b) >= 15:
+                    benchmarks[b_sym] = float((df_b['Close'].iloc[-1] - df_b['Close'].iloc[0]) / df_b['Close'].iloc[0])
+            except Exception:
+                pass
 
         rs_scores = []
         for yf_symbol in watchlist:
             try:
+                if yf_symbol.endswith(".L"):
+                    benchmark_sym = "^FTSE"
+                elif yf_symbol.endswith(".DE") or yf_symbol.endswith(".PA") or yf_symbol.endswith(".AS"):
+                    benchmark_sym = "^STOXX50E"
+                else:
+                    benchmark_sym = "SPY"
+
+                benchmark_ret = benchmarks.get(benchmark_sym, 0.0)
+
                 stock = yf.Ticker(yf_symbol)
                 df_s = stock.history(period="1mo", interval="1d")
                 if df_s.empty or len(df_s) < 15:
                     rs_scores.append((yf_symbol, -999.0))
                     continue
-                
-                stock_ret = (df_s['Close'].iloc[-1] - df_s['Close'].iloc[0]) / df_s['Close'].iloc[0]
-                rs_alpha = stock_ret - spy_ret
+
+                stock_ret = float((df_s['Close'].iloc[-1] - df_s['Close'].iloc[0]) / df_s['Close'].iloc[0])
+                rs_alpha = stock_ret - benchmark_ret
                 rs_scores.append((yf_symbol, rs_alpha))
             except Exception:
                 rs_scores.append((yf_symbol, -999.0))
@@ -436,12 +450,10 @@ def get_ranked_watchlist_by_relative_strength(watchlist: list) -> list:
         failed_tickers = [t for t in watchlist if t not in ranked_watchlist]
         full_ranked = ranked_watchlist + failed_tickers
 
-        print(f" SUCCESS: Relative Strength Priority Sorter Active ({len(full_ranked)} Tickers)!")
-        if valid_scores := [item for item in rs_scores if item[1] != -999.0]:
-            print(f"   -> Top Priority #1: {valid_scores[0][0]} (RS Alpha: +{valid_scores[0][1]*100:.1f}%)")
-            print(f"   -> Top Priority #2: {valid_scores[1][0]} (RS Alpha: +{valid_scores[1][1]*100:.1f}%)")
+        print(f" SUCCESS: Regional Relative Strength Priority Sorter Active ({len(full_ranked)} Tickers)!")
         return full_ranked
-    except Exception:
+    except Exception as e:
+        print(f"[WARN] RS Sorter exception: {e}. Defaulting to standard watchlist order.")
         return watchlist
 
 # -----------------------------------------------------------------------------
