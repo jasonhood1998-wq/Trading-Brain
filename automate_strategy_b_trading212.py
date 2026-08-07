@@ -103,6 +103,7 @@ SECTOR_ETF_MAP = {
 YF_TO_T212_MAP = {
     "NVDA": "NVDA_US_EQ", "AAPL": "AAPL_US_EQ", "MSFT": "MSFT_US_EQ", "TSLA": "TSLA_US_EQ",
     "AMZN": "AMZN_US_EQ", "GOOGL": "GOOGL_US_EQ", "AMD": "AMD_US_EQ", "META": "META_US_EQ",
+    "XYZ": "SQ_US_EQ",
     "SHEL.L": "SHELl_UK_EQ", "AZN.L": "AZNl_UK_EQ", "HSBA.L": "HSBAl_UK_EQ", "ULVR.L": "ULVRl_UK_EQ",
     "BP.L": "BPl_UK_EQ", "GSK.L": "GSKl_UK_EQ", "BARC.L": "BARCl_UK_EQ", "SAP.DE": "SAPd_DE_EQ",
     "SIE.DE": "SIEd_DE_EQ", "ALV.DE": "ALVd_DE_EQ", "AIR.DE": "AIRd_DE_EQ", "DTE.DE": "DTEd_DE_EQ",
