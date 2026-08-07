@@ -701,10 +701,17 @@ def fetch_order_history_fill_prices(retries=3) -> dict:
                 items = data.get("items", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
                 for item in items:
                     if isinstance(item, dict):
-                        ticker = item.get("ticker") or item.get("instrumentCode")
-                        fill_p = item.get("fillPrice") or item.get("averagePrice") or item.get("price")
+                        ticker = item.get("ticker") or item.get("instrumentCode") or (item.get("instrument", {}).get("ticker") if isinstance(item.get("instrument"), dict) else None)
+                        fill_p = item.get("fillPrice") or item.get("averagePrice") or item.get("price") or item.get("fillCost")
                         if ticker and fill_p and float(fill_p) > 0:
-                            fill_prices[ticker] = float(fill_p)
+                            p_val = float(fill_p)
+                            t_str = str(ticker).upper().strip()
+                            fill_prices[t_str] = p_val
+                            if not t_str.endswith("_EQ"):
+                                fill_prices[f"{t_str}_US_EQ"] = p_val
+                                fill_prices[f"{t_str}_UK_EQ"] = p_val
+                            base = t_str.replace("_US_EQ", "").replace("_UK_EQ", "").replace("_DE_EQ", "")
+                            fill_prices[base] = p_val
                 break
             elif res.status_code == 429:
                 time.sleep(1.5 * (attempt + 1))
