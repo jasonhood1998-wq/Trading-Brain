@@ -680,10 +680,15 @@ def manage_open_position_exits(dry_run: bool = False):
     print("-----------------------------------------------------------------------")
     
     t212_positions = fetch_open_positions()
-    t212_pos_dict = {p.get("ticker"): p for p in t212_positions}
+    if not t212_positions:
+        print("[EXIT MONITOR] Trading 212 API returned no positions (or delayed). Skipping exit checks.")
+        return
 
-    conn = sqlite3.connect(DB_PATH)
+    t212_pos_dict = {p.get("ticker"): p for p in t212_positions if isinstance(p, dict) and p.get("ticker")}
+
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     cursor = conn.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL;")
     cursor.execute("SELECT ticker, yf_symbol, shares, entry_price, stop_price, target_price, opened_at FROM trades WHERE status = 'OPEN'")
     db_positions = cursor.fetchall()
 
@@ -698,11 +703,18 @@ def manage_open_position_exits(dry_run: bool = False):
         ticker, yf_symbol, shares, entry_price, stop_price, target_price, opened_at_str = pos
 
         if ticker not in t212_pos_dict:
-            print(f"[*] {ticker}: Position closed manually on Trading 212 interface.")
-            now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
-            cursor.execute("UPDATE trades SET status = 'CLOSED_MANUAL', closed_at = ? WHERE ticker = ?", (now_str, ticker))
-            conn.commit()
-            continue
+            # Extra safety: double check if instrument code matches
+            matched = False
+            for p in t212_positions:
+                if isinstance(p, dict) and (p.get("ticker") == ticker or p.get("instrumentCode") == ticker):
+                    matched = True
+                    break
+            if not matched:
+                print(f"[*] {ticker}: Position closed manually on Trading 212 interface.")
+                now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+                cursor.execute("UPDATE trades SET status = 'CLOSED_MANUAL', closed_at = ? WHERE ticker = ?", (now_str, ticker))
+                conn.commit()
+                continue
 
         current_price = float(t212_pos_dict[ticker].get("currentPrice", entry_price))
 
