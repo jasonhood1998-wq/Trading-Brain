@@ -1103,7 +1103,7 @@ def print_performance_stats():
 def print_open_positions_and_exit_conditions():
     """
     Prints a formatted table of all currently open positions in the database 
-    and their exact required exit conditions (Trailing Stop, Take Profit Target, Time Elapsed).
+    and cross-checks live open positions from Trading 212 API.
     """
     init_database()
     conn = sqlite3.connect(DB_PATH)
@@ -1115,11 +1115,23 @@ def print_open_positions_and_exit_conditions():
     rows = cursor.fetchall()
     conn.close()
 
+    api_positions = fetch_open_positions()
+
     print("\n=======================================================================")
     print("[PORTFOLIO AUDIT] ACTIVE HOLDINGS & LIVE EXIT CONDITIONS")
     print("=======================================================================")
-    if not rows:
-        print("[*] No active open strategy positions in database.")
+    
+    if api_positions:
+        print(f"[*] Trading 212 API Live Positions: {len(api_positions)} Open Position(s) Found!")
+        for pos in api_positions:
+            t = pos.get("ticker")
+            q = pos.get("quantity", 0.0)
+            p = pos.get("averagePrice", 0.0)
+            pnl = pos.get("ppl", 0.0)
+            print(f"   -> API Holding: {t} | Shares: {q} | Avg Cost: ${p:.2f} | Live PnL: £{pnl:+.2f}")
+
+    if not rows and not api_positions:
+        print("[*] No active open strategy positions in database or Trading 212 API.")
         print("=======================================================================\n")
         return
 
