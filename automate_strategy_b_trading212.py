@@ -213,6 +213,20 @@ def is_market_open() -> bool:
     except Exception:
         return True
 
+def is_in_opening_spread_window() -> bool:
+    """
+    Consultant #3 Upgrade: Opening 15-Minute Volatility Exclusion Zone
+    Prevents submitting new buy orders between 9:30 AM and 9:45 AM EST 
+    when broker OTC spreads are artificially widest!
+    """
+    try:
+        now_et = datetime.datetime.now(zoneinfo.ZoneInfo("America/New_York"))
+        open_start = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
+        open_end = now_et.replace(hour=9, minute=45, second=0, microsecond=0)
+        return open_start <= now_et <= open_end
+    except Exception:
+        return False
+
 def check_macro_market_regime(yf_symbol: str = "SPY") -> bool:
     """
     Region-Specific Macro Guard:
@@ -911,6 +925,11 @@ def run_strategy_b_scan(watchlist: list, dry_run: bool = False):
     vix_multiplier, vix_pause = check_vix_volatility_regime()
     if vix_pause:
         print("[VIX PANIC REJECT] ^VIX > 30. Extreme market crash volatility detected. Pausing long buys.")
+        return
+
+    # Consultant #3 Guard: Opening 15-Minute Volatility Exclusion Zone
+    if is_in_opening_spread_window():
+        print("[SPREAD GUARD REJECT] 9:30-9:45 AM EST Opening Window active. Pausing new buys until OTC spreads tighten.")
         return
 
     # Relative Strength Priority Sorter
