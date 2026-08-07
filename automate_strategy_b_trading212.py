@@ -1275,16 +1275,16 @@ def print_open_positions_and_exit_conditions():
             api_avg = pos.get("averagePrice") or pos.get("initialFillPrice") or pos.get("buyPrice") or 0.0
             fx_ppl = pos.get("fxPpl", 0.0)
 
-            # PRIORITY CHAIN FOR ENTRY PRICE (AUTOMATIC - ZERO SKEW)
-            # Priority 1: Use locked entry price from SQLite database
-            if t212_ticker in db_rows and db_rows[t212_ticker][3] > 0:
-                entry_price = db_rows[t212_ticker][3]
-            # Priority 2: Use executed fillPrice from Trading 212 API Order History
-            elif t212_ticker in order_fills:
+            # PRIORITY CHAIN FOR ENTRY PRICE (TRADING 212 OFFICIAL ORDER HISTORY FIRST)
+            # Priority 1: Use official executed fillPrice from Trading 212 API Order History
+            if t212_ticker in order_fills and order_fills[t212_ticker] > 0:
                 entry_price = order_fills[t212_ticker]
-            # Priority 3: Use API averagePrice if provided
+            # Priority 2: Use API averagePrice / initialFillPrice from position object
             elif api_avg > 0:
                 entry_price = api_avg
+            # Priority 3: Use locked entry price from SQLite database
+            elif t212_ticker in db_rows and db_rows[t212_ticker][3] > 0:
+                entry_price = db_rows[t212_ticker][3]
             # Priority 4: Zero-Skew Currency-Decoupled Formula using synchronized Trading 212 data
             else:
                 pure_stock_pnl_gbp = ppl - fx_ppl
