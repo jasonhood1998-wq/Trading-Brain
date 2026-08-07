@@ -1132,21 +1132,32 @@ def print_performance_stats():
     avg_loss = abs(sum(losses) / len(losses)) if losses else 0.0
     profit_factor = sum(wins) / abs(sum(losses)) if losses and sum(losses) != 0 else (sum(wins) if wins else 0.0)
     expectancy = ((win_rate / 100.0) * avg_win) - (((100.0 - win_rate) / 100.0) * avg_loss)
-LOCKED_POSITIONS_PATH = os.path.join(SCRIPT_DIR, "locked_positions.json")
+MANUAL_ENTRIES_PATH = os.path.join(SCRIPT_DIR, "manual_entries.json")
 
-def load_locked_positions() -> dict:
-    if os.path.exists(LOCKED_POSITIONS_PATH):
+def load_manual_entries() -> dict:
+    if os.path.exists(MANUAL_ENTRIES_PATH):
         try:
-            with open(LOCKED_POSITIONS_PATH, "r") as f:
+            with open(MANUAL_ENTRIES_PATH, "r") as f:
                 return json.load(f)
         except Exception:
             pass
-    return {}
+    return {
+        "PEP_US_EQ": 137.92,
+        "MCD_US_EQ": 274.68,
+        "AAPL_US_EQ": 312.50,
+        "JNJ_US_EQ": 256.90,
+        "ABT_US_EQ": 107.47,
+        "CSCO_US_EQ": 121.51,
+        "AVGO_US_EQ": 424.68,
+        "LLY_US_EQ": 1177.75
+    }
 
-def save_locked_positions(data: dict):
+def save_manual_entry(ticker: str, entry_price: float):
+    entries = load_manual_entries()
+    entries[ticker] = round(entry_price, 2)
     try:
-        with open(LOCKED_POSITIONS_PATH, "w") as f:
-            json.dump(data, f, indent=2)
+        with open(MANUAL_ENTRIES_PATH, "w") as f:
+            json.dump(entries, f, indent=2)
     except Exception:
         pass
 
@@ -1162,7 +1173,7 @@ def print_open_positions_and_exit_conditions():
     now_dt = datetime.datetime.now()
     now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
 
-    locked_json = load_locked_positions()
+    manual_entries = load_manual_entries()
 
     # Step 1: Read existing DB rows
     conn = sqlite3.connect(DB_PATH, timeout=10)
@@ -1174,8 +1185,6 @@ def print_open_positions_and_exit_conditions():
     """)
     db_rows = {row[0]: row for row in cursor.fetchall()}
     conn.close()
-
-    json_updated = False
 
     if api_positions:
         conn_lock = sqlite3.connect(DB_PATH, timeout=10)
@@ -1208,27 +1217,24 @@ def print_open_positions_and_exit_conditions():
             except Exception:
                 pass
 
-            # Calculate true entry price without current price fallback
             api_avg = pos.get("averagePrice") or pos.get("initialFillPrice") or pos.get("buyPrice") or 0.0
-            if api_avg <= 0 and current_price > 0 and shares > 0 and ppl != 0:
-                ppl_usd = ppl / 0.78  # Convert GBP PnL to USD
-                api_avg = current_price - (ppl_usd / shares)
 
-            # Check JSON vault first for immutable locked price
-            if t212_ticker in locked_json:
-                entry_price = locked_json[t212_ticker].get("entry_price", api_avg)
-                stop_price = locked_json[t212_ticker].get("stop_price", 0.0)
-                target_price = locked_json[t212_ticker].get("target_price", 0.0)
-                opened_at_str = locked_json[t212_ticker].get("opened_at", now_str)
-            elif t212_ticker in db_rows:
-                _, _, _, entry_price, stop_price, target_price, opened_at_str = db_rows[t212_ticker]
+            # PRIORITY CHAIN FOR ENTRY PRICE (NEVER USES CURRENT PRICE)
+            if t212_ticker in manual_entries:
+                entry_price = manual_entries[t212_ticker]
+            elif t212_ticker in db_rows and db_rows[t212_ticker][3] > 0:
+                entry_price = db_rows[t212_ticker][3]
+            elif api_avg > 0:
+                entry_price = api_avg
             else:
-                entry_price = api_avg if api_avg > 0 else current_price
-                opened_at_str = now_str
-                stop_price = 0.0
-                target_price = 0.0
+                entry_price = 0.0  # Explicitly 0.0 if un-set (NO FALLBACK TO CURRENT PRICE)
 
-            if stop_price == 0.0 and entry_price > 0 and current_price > 0:
+            opened_at_str = db_rows[t212_ticker][6] if t212_ticker in db_rows else now_str
+
+            stop_price = 0.0
+            target_price = 0.0
+
+            if entry_price > 0 and current_price > 0:
                 try:
                     df['TR'] = df[['High', 'Low', 'Close']].apply(
                         lambda x: max(x['High'] - x['Low'], abs(x['High'] - df['Close'].shift(1).loc[x.name]), abs(x['Low'] - df['Close'].shift(1).loc[x.name])), 
@@ -1241,34 +1247,22 @@ def print_open_positions_and_exit_conditions():
                     stop_price = round(entry_price * 0.98, 2)
                     target_price = round(entry_price * 1.05, 2)
 
-            # Save into immutable JSON vault
-            if t212_ticker not in locked_json and entry_price > 0:
-                locked_json[t212_ticker] = {
-                    "entry_price": round(entry_price, 2),
-                    "stop_price": round(stop_price, 2),
-                    "target_price": round(target_price, 2),
-                    "opened_at": opened_at_str
-                }
-                json_updated = True
-
             # Sync to SQLite database
-            cur_lock.execute("""
-                INSERT OR REPLACE INTO trades 
-                (ticker, yf_symbol, shares, entry_price, stop_price, target_price, opened_at, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN')
-            """, (t212_ticker, yf_symbol, shares, entry_price, stop_price, target_price, opened_at_str))
+            if entry_price > 0:
+                cur_lock.execute("""
+                    INSERT OR REPLACE INTO trades 
+                    (ticker, yf_symbol, shares, entry_price, stop_price, target_price, opened_at, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN')
+                """, (t212_ticker, yf_symbol, shares, entry_price, stop_price, target_price, opened_at_str))
 
         conn_lock.commit()
         conn_lock.close()
-
-    if json_updated:
-        save_locked_positions(locked_json)
 
     print("\n=======================================================================")
     print("[PORTFOLIO AUDIT] ACTIVE HOLDINGS & LIVE EXIT CONDITIONS")
     print("=======================================================================")
 
-    if not api_positions and not locked_json:
+    if not api_positions:
         print("[*] No active open strategy positions in database or Trading 212 API.")
         print("=======================================================================\n")
         return
@@ -1293,11 +1287,13 @@ def print_open_positions_and_exit_conditions():
         opened_at_str = now_str
         hours_open = 0.0
 
-        if t212_ticker in locked_json:
-            entry_price = locked_json[t212_ticker].get("entry_price", 0.0)
-            stop_price = locked_json[t212_ticker].get("stop_price", 0.0)
-            target_price = locked_json[t212_ticker].get("target_price", 0.0)
-            opened_at_str = locked_json[t212_ticker].get("opened_at", now_str)
+        if t212_ticker in manual_entries:
+            entry_price = manual_entries[t212_ticker]
+        elif t212_ticker in db_rows and db_rows[t212_ticker][3] > 0:
+            entry_price = db_rows[t212_ticker][3]
+
+        if t212_ticker in db_rows:
+            _, _, _, _, stop_price, target_price, opened_at_str = db_rows[t212_ticker]
 
         try:
             opened_at_dt = datetime.datetime.strptime(opened_at_str, "%Y-%m-%d %H:%M:%S")
@@ -1305,7 +1301,7 @@ def print_open_positions_and_exit_conditions():
         except Exception:
             pass
 
-        current_price = entry_price
+        current_price = entry_price if entry_price > 0 else 0.0
         try:
             stock = yf.Ticker(yf_symbol)
             df = stock.history(period="5d", interval="5m")
@@ -1319,7 +1315,11 @@ def print_open_positions_and_exit_conditions():
         pnl_pct = ((current_price - entry_price) / entry_price) * 100.0 if entry_price > 0 else 0.0
 
         print(f"\n📌 POS: {t212_ticker} ({yf_symbol}) | Shares: {shares}")
-        print(f"   --> Entry Price:    ${entry_price:.2f}")
+        if entry_price > 0:
+            print(f"   --> Entry Price:    ${entry_price:.2f}")
+        else:
+            print(f"   --> Entry Price:    [NOT SET] (Run python automate_strategy_b_trading212.py --set-entry {yf_symbol} <PRICE>)")
+
         print(f"   --> Current Price:  ${current_price:.2f} (Unrealized PnL: £{ppl:+.2f} / {pnl_pct:+.2f}%)")
         print(f"   --> Stop Loss (SL): ${stop_price:.2f}  (Triggers SELL if Price <= ${stop_price:.2f})")
         print(f"   --> Take Profit(TP):${target_price:.2f} (Triggers SELL if Price >= ${target_price:.2f})")
@@ -1343,10 +1343,24 @@ def main():
     parser.add_argument("--show-watchlist", action="store_true", help="Print active watchlist tickers and exit.")
     parser.add_argument("--positions", action="store_true", help="Print active holdings and live exit triggers and exit.")
     parser.add_argument("--stats", action="store_true", help="Print systematic performance scorecard and exit.")
+    parser.add_argument("--set-entry", nargs=2, metavar=('SYMBOL', 'PRICE'), help="Lock exact manual entry price for a stock (e.g. --set-entry PEP 137.92)")
     args = parser.parse_args()
 
     init_database()
     init_csv_logs()
+
+    if args.set_entry:
+        symbol, price_str = args.set_entry
+        symbol_clean = symbol.upper().strip()
+        t212_t = resolve_t212_ticker(symbol_clean)
+        try:
+            val = float(price_str)
+            save_manual_entry(t212_t, val)
+            save_manual_entry(symbol_clean, val)
+            print(f"[SUCCESS] Locked Entry Price for {t212_t} ({symbol_clean}) to ${val:.2f}!")
+        except Exception as e:
+            print(f"[ERROR] Invalid price '{price_str}': {e}")
+        sys.exit(0)
 
     if args.positions:
         print_open_positions_and_exit_conditions()
