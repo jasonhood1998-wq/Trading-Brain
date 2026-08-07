@@ -596,9 +596,7 @@ def load_instrument_metadata():
 
 def resolve_t212_ticker(yf_symbol: str) -> str:
     if yf_symbol in YF_TO_T212_MAP:
-        mapped = YF_TO_T212_MAP[yf_symbol]
-        if mapped in METADATA_CACHE:
-            return mapped
+        return YF_TO_T212_MAP[yf_symbol]
 
     clean_symbol = yf_symbol.replace(".L", "").replace(".DE", "").replace(".PA", "").replace(".AS", "")
     for t212_ticker in METADATA_CACHE:
