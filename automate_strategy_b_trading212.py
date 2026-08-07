@@ -1246,6 +1246,8 @@ def print_open_positions_and_exit_conditions():
     now_dt = datetime.datetime.now()
     now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
 
+    manual_entries = load_manual_entries()
+
     # Step 1: Read existing DB rows
     conn = sqlite3.connect(DB_PATH, timeout=10)
     cursor = conn.cursor()
