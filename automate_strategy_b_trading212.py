@@ -1124,10 +1124,12 @@ def print_open_positions_and_exit_conditions():
     if api_positions:
         print(f"[*] Trading 212 API Live Positions: {len(api_positions)} Open Position(s) Found!")
         for pos in api_positions:
-            t = pos.get("ticker")
-            q = pos.get("quantity", 0.0)
-            p = pos.get("averagePrice", 0.0)
-            pnl = pos.get("ppl", 0.0)
+            t = "UNKNOWN"
+            if isinstance(pos, dict):
+                t = pos.get("ticker") or (pos.get("instrument", {}).get("ticker") if isinstance(pos.get("instrument"), dict) else None) or pos.get("instrumentCode") or "UNKNOWN"
+            q = pos.get("quantity", 0.0) if isinstance(pos, dict) else 0.0
+            p = pos.get("averagePrice") or pos.get("currentPrice") or 0.0 if isinstance(pos, dict) else 0.0
+            pnl = pos.get("ppl", 0.0) if isinstance(pos, dict) else 0.0
             print(f"   -> API Holding: {t} | Shares: {q} | Avg Cost: ${p:.2f} | Live PnL: £{pnl:+.2f}")
 
     if not rows and not api_positions:
