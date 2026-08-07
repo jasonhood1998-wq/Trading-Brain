@@ -509,11 +509,35 @@ def predict_signal_quality(
 # -----------------------------------------------------------------------------
 # 6. Volatility Parity Position Sizing Math
 # -----------------------------------------------------------------------------
+FX_CACHE = {}
+
 def get_fx_rate_to_gbp(currency: str) -> float:
     currency = currency.upper()
     if currency == "GBP": return 1.0
-    fx_map = {"USD": 0.78, "EUR": 0.85, "GBX": 0.01}
-    return fx_map.get(currency, 1.0)
+    if currency == "GBX": return 0.01
+
+    if currency in FX_CACHE and (time.time() - FX_CACHE[currency]["time"]) < 900:
+        return FX_CACHE[currency]["rate"]
+
+    try:
+        if currency == "USD":
+            fx_ticker = yf.Ticker("GBPUSD=X")
+            hist = fx_ticker.history(period="1d", interval="5m")
+            if not hist.empty:
+                rate = 1.0 / float(hist['Close'].iloc[-1])
+                FX_CACHE[currency] = {"rate": rate, "time": time.time()}
+                return rate
+        elif currency == "EUR":
+            fx_ticker = yf.Ticker("EURGBP=X")
+            hist = fx_ticker.history(period="1d", interval="5m")
+            if not hist.empty:
+                rate = float(hist['Close'].iloc[-1])
+                FX_CACHE[currency] = {"rate": rate, "time": time.time()}
+                return rate
+    except Exception:
+        pass
+
+    return {"USD": 0.78, "EUR": 0.85}.get(currency, 1.0)
 
 def calculate_volatility_parity_position_size(
     account_equity_gbp: float,
@@ -1219,13 +1243,14 @@ def print_open_positions_and_exit_conditions():
 
             api_avg = pos.get("averagePrice") or pos.get("initialFillPrice") or pos.get("buyPrice") or 0.0
 
-            # Exact Mathematical Reverse Entry Price Formula: Entry = CurrentPrice * (1 - (ppl / value))
-            pos_val = pos.get("value", 0.0)
-            if api_avg <= 0 and pos_val > 0 and current_price > 0:
-                ratio = 1.0 - (ppl / pos_val)
-                calculated_entry = current_price * ratio
-                if calculated_entry > 0:
-                    api_avg = round(calculated_entry, 2)
+            # Compute pos_val reliably in GBP
+            pos_val = pos.get("value") or (current_price * shares * 0.78) or 0.0
+            if api_avg <= 0 and current_price > 0:
+                if pos_val > 0 and ppl != 0:
+                    ratio = 1.0 - (ppl / pos_val)
+                    api_avg = round(current_price * ratio, 2)
+                else:
+                    api_avg = round(current_price, 2)
 
             # Check created timestamp from Trading 212 API
             created_ts = pos.get("created") or pos.get("initialFillDate")
@@ -1248,7 +1273,9 @@ def print_open_positions_and_exit_conditions():
                 save_manual_entry(t212_ticker, entry_price)
                 save_manual_entry(yf_symbol, entry_price)
             else:
-                entry_price = 0.0
+                entry_price = current_price if current_price > 0 else 100.0
+                save_manual_entry(t212_ticker, entry_price)
+                save_manual_entry(yf_symbol, entry_price)
 
             if t212_ticker in db_rows and db_rows[t212_ticker][6]:
                 opened_at_str = db_rows[t212_ticker][6]
