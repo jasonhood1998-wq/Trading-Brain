@@ -1250,6 +1250,8 @@ def print_open_positions_and_exit_conditions():
     db_rows = {row[0]: row for row in cursor.fetchall()}
     conn.close()
 
+    calculated_entries = {}
+
     if api_positions:
         conn_lock = sqlite3.connect(DB_PATH, timeout=10)
         cur_lock = conn_lock.cursor()
@@ -1270,7 +1272,7 @@ def print_open_positions_and_exit_conditions():
                     yf_symbol = yf_k
                     break
 
-            # Fetch exact live real-time price directly from Trading 212 API
+            # Fetch exact live real-time price directly from Trading 212 API payload
             current_price = pos.get("currentPrice") or 0.0
             if current_price <= 0:
                 try:
@@ -1285,25 +1287,27 @@ def print_open_positions_and_exit_conditions():
             api_avg = pos.get("averagePrice") or pos.get("initialFillPrice") or pos.get("buyPrice") or 0.0
             fx_ppl = pos.get("fxPpl", 0.0)
 
-            # PRIORITY CHAIN FOR ENTRY PRICE (TRADING 212 OFFICIAL ORDER HISTORY FIRST)
-            # Priority 1: Use official executed fillPrice from Trading 212 API Order History
+            # PRIORITY CHAIN FOR ENTRY PRICE WITH DIAGNOSTIC TRACING
+            source_tag = "UNKNOWN"
             if t212_ticker in order_fills and order_fills[t212_ticker] > 0:
                 entry_price = order_fills[t212_ticker]
-            # Priority 2: Use API averagePrice / initialFillPrice from position object
+                source_tag = "Trading 212 Order History API (/equity/history/orders)"
             elif api_avg > 0:
                 entry_price = api_avg
-            # Priority 3: Use locked entry price from SQLite database
-            elif t212_ticker in db_rows and db_rows[t212_ticker][3] > 0:
-                entry_price = db_rows[t212_ticker][3]
-            # Priority 4: Zero-Skew Currency-Decoupled Formula using synchronized Trading 212 data
+                source_tag = "Trading 212 Position Payload (averagePrice)"
             else:
                 pure_stock_pnl_gbp = ppl - fx_ppl
                 fx_rate = get_fx_rate_to_gbp("USD")
                 if shares > 0 and fx_rate > 0 and current_price > 0:
                     skew_adj = pure_stock_pnl_gbp / (shares * fx_rate)
                     entry_price = round(current_price - skew_adj, 2)
+                    source_tag = f"Zero-Skew PnL Formula (CurrentPrice={current_price}, PnL={pure_stock_pnl_gbp:.2f})"
+                elif t212_ticker in db_rows and db_rows[t212_ticker][3] > 0:
+                    entry_price = db_rows[t212_ticker][3]
+                    source_tag = "Local SQLite Database (trading_brain.db)"
                 else:
                     entry_price = current_price if current_price > 0 else 100.0
+                    source_tag = "Current Price Fallback"
 
             # Check created timestamp from Trading 212 API
             created_ts = pos.get("created") or pos.get("initialFillDate")
@@ -1334,6 +1338,15 @@ def print_open_positions_and_exit_conditions():
                     stop_price = round(entry_price * 0.98, 2)
                     target_price = round(entry_price * 1.05, 2)
 
+            calculated_entries[t212_ticker] = {
+                "entry_price": entry_price,
+                "current_price": current_price,
+                "stop_price": stop_price,
+                "target_price": target_price,
+                "opened_at_str": opened_at_str,
+                "source_tag": source_tag
+            }
+
             # Sync & Lock permanently to SQLite database
             cur_lock.execute("""
                 INSERT OR REPLACE INTO trades 
@@ -1343,18 +1356,6 @@ def print_open_positions_and_exit_conditions():
 
         conn_lock.commit()
         conn_lock.close()
-
-    # Step 3: Re-load manual_entries vault & DB rows so all calculated entries are available in memory
-    manual_entries = load_manual_entries()
-
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT ticker, yf_symbol, shares, entry_price, stop_price, target_price, opened_at
-        FROM trades WHERE status IN ('OPEN', 'OPEN_MONEY_MARKET')
-    """)
-    db_rows = {row[0]: row for row in cursor.fetchall()}
-    conn.close()
 
     print("\n=======================================================================")
     print("[PORTFOLIO AUDIT] ACTIVE HOLDINGS & LIVE EXIT CONDITIONS")
@@ -1379,33 +1380,18 @@ def print_open_positions_and_exit_conditions():
                 yf_symbol = yf_k
                 break
 
-        entry_price = 0.0
-        stop_price = 0.0
-        target_price = 0.0
-        opened_at_str = now_str
+        audit_data = calculated_entries.get(t212_ticker, {})
+        entry_price = audit_data.get("entry_price", 0.0)
+        current_price = audit_data.get("current_price", pos.get("currentPrice", 0.0))
+        stop_price = audit_data.get("stop_price", 0.0)
+        target_price = audit_data.get("target_price", 0.0)
+        opened_at_str = audit_data.get("opened_at_str", now_str)
+        source_tag = audit_data.get("source_tag", "UNKNOWN")
+
         hours_open = 0.0
-
-        if t212_ticker in manual_entries:
-            entry_price = manual_entries[t212_ticker]
-        elif t212_ticker in db_rows and db_rows[t212_ticker][3] > 0:
-            entry_price = db_rows[t212_ticker][3]
-
-        if t212_ticker in db_rows:
-            _, _, _, _, stop_price, target_price, opened_at_str = db_rows[t212_ticker]
-
         try:
             opened_at_dt = datetime.datetime.strptime(opened_at_str, "%Y-%m-%d %H:%M:%S")
             hours_open = max(0.0, (now_dt - opened_at_dt).total_seconds() / 3600.0)
-        except Exception:
-            pass
-
-        current_price = entry_price if entry_price > 0 else 0.0
-        try:
-            stock = yf.Ticker(yf_symbol)
-            df = stock.history(period="5d", interval="5m")
-            if not df.empty:
-                current_price = float(df['Close'].iloc[-1])
-                if yf_symbol.endswith(".L"): current_price /= 100.0
         except Exception:
             pass
 
@@ -1413,17 +1399,14 @@ def print_open_positions_and_exit_conditions():
         pnl_pct = ((current_price - entry_price) / entry_price) * 100.0 if entry_price > 0 else 0.0
 
         print(f"\n📌 POS: {t212_ticker} ({yf_symbol}) | Shares: {shares}")
-        if entry_price > 0:
-            print(f"   --> Entry Price:    ${entry_price:.2f}")
-        else:
-            print(f"   --> Entry Price:    [NOT SET] (Run python automate_strategy_b_trading212.py --set-entry {yf_symbol} <PRICE>)")
-
+        print(f"   --> Entry Price:    ${entry_price:.2f}")
         print(f"   --> Current Price:  ${current_price:.2f} (Unrealized PnL: £{ppl:+.2f} / {pnl_pct:+.2f}%)")
         print(f"   --> Stop Loss (SL): ${stop_price:.2f}  (Triggers SELL if Price <= ${stop_price:.2f})")
         print(f"   --> Take Profit(TP):${target_price:.2f} (Triggers SELL if Price >= ${target_price:.2f})")
         if hours_open > 0:
             print(f"   --> Time Elapsed:   {hours_open:.1f} Hours Open")
         print(f"   --> Technical Exit: Triggers SELL if 20 EMA crosses below 50 SMA")
+        print(f"   --> Data Source:    {source_tag}")
 
     print("\n=======================================================================\n")
 
