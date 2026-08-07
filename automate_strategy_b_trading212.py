@@ -754,27 +754,69 @@ def manage_open_position_exits(dry_run: bool = False):
 # -----------------------------------------------------------------------------
 def run_bear_market_inverse_etf_strategy(yf_symbol: str, account_val_gbp: float, available_cash_gbp: float, dry_run: bool = False):
     """
-    Enhanced Bear Market Engine:
-    1. Locks 70% of cash in High-Yield Reserve (5.2% APY Yield Tracking)
-    2. Trades Inverse ETFs (SH, PSQ, SUK2.L) with 30% active bear budget
-    3. Capitulation Reversal Exit Protection (Exits Inverse ETFs on Market Bottom oversold signals)
+    Enhanced Bear Market Engine with Money Market ETF Parking:
+    1. Parks 70% of cash into Money Market ETFs (CSH2.L for GBP / BIL for USD) on Trading 212 to earn ~5.2% APY daily yield!
+    2. Trades Inverse ETFs (SH, PSQ, SUK2.L) with 30% active bear budget.
+    3. Defensive Safe-Haven Exemption (Allows buying Gold & Defensive Staples like WMT, PG, KO during Bear Markets).
     """
-    # Defensive Safe-Haven Exemption (Allows buying Gold & Defensive Staples even during Bear Markets)
     defensive_safe_havens = ["GOLD", "WMT", "PG", "KO", "JNJ"]
     if yf_symbol in defensive_safe_havens:
         return  # Allow normal scan flow for defensive safe havens
 
+    cash_reserve_gbp = available_cash_gbp * 0.70
+    active_bear_budget_gbp = available_cash_gbp * 0.30
+
+    # 1. Money Market ETF Parking for 70% Locked Reserve
+    money_market_symbol = "CSH2.L" if yf_symbol.endswith(".L") or IS_DEMO else "BIL"
+    mm_ticker = resolve_t212_ticker(money_market_symbol)
+
+    open_pos = fetch_open_positions()
+    open_tickers = [p.get("ticker") for p in open_pos]
+
+    if mm_ticker not in open_tickers and cash_reserve_gbp > 50.0:
+        mm_meta = METADATA_CACHE.get(mm_ticker, {"minTradeSize": 0.0001, "quantityPrecision": 4})
+        try:
+            stock_mm = yf.Ticker(money_market_symbol)
+            df_mm = stock_mm.history(period="1d")
+            if not df_mm.empty:
+                mm_price = float(df_mm['Close'].iloc[-1])
+                if money_market_symbol.endswith(".L"): mm_price /= 100.0
+                
+                mm_shares = calculate_volatility_parity_position_size(
+                    account_equity_gbp=account_val_gbp,
+                    available_cash_gbp=cash_reserve_gbp,
+                    entry_price=mm_price,
+                    stop_price=mm_price * 0.98,
+                    atr14=mm_price * 0.005,
+                    trade_currency="GBP" if money_market_symbol.endswith(".L") else "USD",
+                    quantity_precision=mm_meta.get("quantityPrecision", 4),
+                    min_trade_size=mm_meta.get("minTradeSize", 0.0001)
+                )
+
+                if mm_shares > 0:
+                    print(f"\n[MONEY MARKET PARK] Parking 70% Cash Reserve into Money Market ETF {mm_ticker} ({money_market_symbol}) @ £{mm_price:.2f}")
+                    status_code, response_data = place_market_order(mm_ticker, mm_shares, dry_run=dry_run)
+                    if status_code in (200, 201):
+                        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        conn = sqlite3.connect(DB_PATH)
+                        cursor = conn.cursor()
+                        cursor.execute("""
+                            INSERT OR REPLACE INTO trades 
+                            (ticker, yf_symbol, shares, entry_price, stop_price, target_price, opened_at, status)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN_MONEY_MARKET')
+                        """, (mm_ticker, money_market_symbol, mm_shares, mm_price, mm_price * 0.98, mm_price * 1.05, now_str))
+                        conn.commit()
+                        conn.close()
+                        print(f" SUCCESS: Parked 70% Cash Reserve in Money Market ETF {mm_ticker} earning ~5.2% APY!")
+        except Exception as e:
+            print(f"[ERROR] Money market parking exception: {e}")
+
+    # 2. Active Bear Budget Inverse ETF Execution (30%)
     etf_symbol = "SUK2.L" if yf_symbol.endswith(".L") else ("PSQ" if yf_symbol in ["QQQ", "NVDA", "AAPL", "MSFT", "AMD", "META", "AMZN", "GOOGL"] else "SH")
     t212_ticker = resolve_t212_ticker(etf_symbol)
 
-    # Check if Inverse ETF position is already open
-    open_pos = fetch_open_positions()
-    if any(p.get("ticker") == t212_ticker for p in open_pos):
+    if t212_ticker in open_tickers:
         return
-
-    cash_reserve_gbp = available_cash_gbp * 0.70
-    active_bear_budget_gbp = available_cash_gbp * 0.30
-    est_annual_interest_gbp = cash_reserve_gbp * 0.052  # 5.2% APY Cash Interest
 
     meta = METADATA_CACHE.get(t212_ticker, {"minTradeSize": 0.0001, "quantityPrecision": 4, "currencyCode": "USD"})
 
@@ -801,7 +843,6 @@ def run_bear_market_inverse_etf_strategy(yf_symbol: str, account_val_gbp: float,
 
         if intraday_trend_pass and pullback_pass and reversal_pass:
             print(f"\n[BEAR MARKET TRIGGER] Inverse ETF Buy Signal on {etf_symbol} ({t212_ticker})!")
-            print(f"   Total Free Cash: GBP {available_cash_gbp:,.2f} | Locked Reserve (70%): GBP {cash_reserve_gbp:,.2f} [Est. Interest: £{est_annual_interest_gbp:,.2f}/yr]")
             print(f"   Active Bear Budget (30%): GBP {active_bear_budget_gbp:,.2f}")
 
             entry_price = float(closed_bar['Close'])
