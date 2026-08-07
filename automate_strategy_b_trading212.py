@@ -1100,16 +1100,61 @@ def print_performance_stats():
     profit_factor = sum(wins) / abs(sum(losses)) if losses and sum(losses) != 0 else (sum(wins) if wins else 0.0)
     expectancy = ((win_rate / 100.0) * avg_win) - (((100.0 - win_rate) / 100.0) * avg_loss)
 
+def print_open_positions_and_exit_conditions():
+    """
+    Prints a formatted table of all currently open positions in the database 
+    and their exact required exit conditions (Trailing Stop, Take Profit Target, Time Elapsed).
+    """
+    init_database()
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT ticker, yf_symbol, shares, entry_price, stop_price, target_price, opened_at
+        FROM trades WHERE status IN ('OPEN', 'OPEN_MONEY_MARKET')
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+
     print("\n=======================================================================")
-    print("[QUANT STATS] SYSTEMATIC PERFORMANCE ANALYTICS SCORECARD")
+    print("[PORTFOLIO AUDIT] ACTIVE HOLDINGS & LIVE EXIT CONDITIONS")
     print("=======================================================================")
-    print(f"[*] Total Closed Trades: {total_trades}")
-    print(f"[*] Win Rate: {win_rate:.1f}% ({len(wins)} Wins / {len(losses)} Losses)")
-    print(f"[*] Total Realized PnL: ${total_pnl:,.2f}")
-    print(f"[*] Average Win: ${avg_win:,.2f} | Average Loss: ${avg_loss:,.2f}")
-    print(f"[*] Profit Factor: {profit_factor:.2f}")
-    print(f"[*] Trade Expectancy (E): ${expectancy:,.2f} per trade")
-    print("=======================================================================\n")
+    if not rows:
+        print("[*] No active open strategy positions in database.")
+        print("=======================================================================\n")
+        return
+
+    now_dt = datetime.datetime.now()
+    for row in rows:
+        ticker, yf_symbol, shares, entry_price, stop_price, target_price, opened_at_str = row
+        
+        current_price = entry_price
+        try:
+            stock = yf.Ticker(yf_symbol)
+            df = stock.history(period="1d")
+            if not df.empty:
+                current_price = float(df['Close'].iloc[-1])
+                if yf_symbol.endswith(".L"): current_price /= 100.0
+        except Exception:
+            pass
+
+        unrealized_pnl = (current_price - entry_price) * shares
+        pnl_pct = ((current_price - entry_price) / entry_price) * 100.0 if entry_price > 0 else 0.0
+
+        hours_open = 0.0
+        try:
+            opened_at_dt = datetime.datetime.strptime(opened_at_str, "%Y-%m-%d %H:%M:%S")
+            hours_open = (now_dt - opened_at_dt).total_seconds() / 3600.0
+        except Exception:
+            pass
+
+        print(f"\n📌 POS: {ticker} ({yf_symbol}) | Shares: {shares}")
+        print(f"   --> Entry Price:    ${entry_price:.2f}")
+        print(f"   --> Current Price:  ${current_price:.2f} (Unrealized PnL: ${unrealized_pnl:+.2f} / {pnl_pct:+.2f}%)")
+        print(f"   --> Stop Loss (SL): ${stop_price:.2f}  (Triggers SELL if Price <= ${stop_price:.2f})")
+        print(f"   --> Take Profit(TP):${target_price:.2f} (Triggers SELL if Price >= ${target_price:.2f})")
+        print(f"   --> Time Elapsed:   {hours_open:.1f} Hours Open")
+        print(f"   --> Technical Exit: Triggers SELL if 20 EMA crosses below 50 SMA")
+    print("\n=======================================================================\n")
 
 # -----------------------------------------------------------------------------
 # 11. Entrypoint & Daemon Loop
@@ -1121,11 +1166,16 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Simulate signals and orders without API submission.")
     parser.add_argument("--test-connection", action="store_true", help="Test Trading 212 API connection and exit.")
     parser.add_argument("--show-watchlist", action="store_true", help="Print active watchlist tickers and exit.")
+    parser.add_argument("--positions", action="store_true", help="Print active holdings and live exit triggers and exit.")
     parser.add_argument("--stats", action="store_true", help="Print systematic performance scorecard and exit.")
     args = parser.parse_args()
 
     init_database()
     init_csv_logs()
+
+    if args.positions:
+        print_open_positions_and_exit_conditions()
+        sys.exit(0)
 
     if args.stats:
         print_performance_stats()
