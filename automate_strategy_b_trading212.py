@@ -1260,20 +1260,22 @@ def print_open_positions_and_exit_conditions():
                     yf_symbol = yf_k
                     break
 
-            # Fetch live current market price
-            current_price = 0.0
-            try:
-                stock = yf.Ticker(yf_symbol)
-                df = stock.history(period="5d", interval="5m")
-                if not df.empty:
-                    current_price = float(df['Close'].iloc[-1])
-                    if yf_symbol.endswith(".L"): current_price /= 100.0
-            except Exception:
-                pass
+            # Fetch exact live real-time price directly from Trading 212 API
+            current_price = pos.get("currentPrice") or 0.0
+            if current_price <= 0:
+                try:
+                    stock = yf.Ticker(yf_symbol)
+                    df = stock.history(period="5d", interval="5m")
+                    if not df.empty:
+                        current_price = float(df['Close'].iloc[-1])
+                        if yf_symbol.endswith(".L"): current_price /= 100.0
+                except Exception:
+                    pass
 
             api_avg = pos.get("averagePrice") or pos.get("initialFillPrice") or pos.get("buyPrice") or 0.0
+            fx_ppl = pos.get("fxPpl", 0.0)
 
-            # PRIORITY CHAIN FOR ENTRY PRICE (AUTOMATIC - NO MANUAL FILES)
+            # PRIORITY CHAIN FOR ENTRY PRICE (AUTOMATIC - ZERO SKEW)
             # Priority 1: Use locked entry price from SQLite database
             if t212_ticker in db_rows and db_rows[t212_ticker][3] > 0:
                 entry_price = db_rows[t212_ticker][3]
@@ -1283,12 +1285,13 @@ def print_open_positions_and_exit_conditions():
             # Priority 3: Use API averagePrice if provided
             elif api_avg > 0:
                 entry_price = api_avg
-            # Priority 4: Reverse PnL Math Equation using Live FX Rate
+            # Priority 4: Zero-Skew Currency-Decoupled Formula using synchronized Trading 212 data
             else:
-                pos_val_gbp = pos.get("value") or (current_price * shares * get_fx_rate_to_gbp("USD")) or 0.0
-                if pos_val_gbp > 0 and ppl != 0 and current_price > 0:
-                    ratio = 1.0 - (ppl / pos_val_gbp)
-                    entry_price = round(current_price * ratio, 2)
+                pure_stock_pnl_gbp = ppl - fx_ppl
+                fx_rate = get_fx_rate_to_gbp("USD")
+                if shares > 0 and fx_rate > 0 and current_price > 0:
+                    skew_adj = pure_stock_pnl_gbp / (shares * fx_rate)
+                    entry_price = round(current_price - skew_adj, 2)
                 else:
                     entry_price = current_price if current_price > 0 else 100.0
 
