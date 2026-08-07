@@ -1153,7 +1153,12 @@ def print_open_positions_and_exit_conditions():
             t212_ticker = pos.get("ticker") or (pos.get("instrument", {}).get("ticker") if isinstance(pos.get("instrument"), dict) else None) or pos.get("instrumentCode") or "UNKNOWN"
         
         shares = pos.get("quantity", 0.0) if isinstance(pos, dict) else 0.0
-        api_avg_price = pos.get("averagePrice") or pos.get("initialFillPrice") or pos.get("buyPrice") or 0.0 if isinstance(pos, dict) else 0.0
+        api_avg_price = 0.0
+        if isinstance(pos, dict):
+            api_avg_price = pos.get("averagePrice") or pos.get("initialFillPrice") or pos.get("buyPrice") or pos.get("price") or 0.0
+            if api_avg_price <= 0 and shares > 0 and pos.get("value"):
+                api_avg_price = pos.get("value") / shares
+
         ppl = pos.get("ppl", 0.0) if isinstance(pos, dict) else 0.0
 
         # Reverse lookup YF symbol
@@ -1168,8 +1173,9 @@ def print_open_positions_and_exit_conditions():
         target_price = 0.0
         hours_open = 0.0
 
+        # If recorded in DB, use locked DB entry price & stop price
         if t212_ticker in db_rows:
-            _, _, _, db_entry, db_stop, db_target, opened_at_str = db_rows[t212_ticker]
+            _, _, db_shares, db_entry, db_stop, db_target, opened_at_str = db_rows[t212_ticker]
             if db_entry > 0: entry_price = db_entry
             if db_stop > 0: stop_price = db_stop
             if db_target > 0: target_price = db_target
@@ -1179,26 +1185,47 @@ def print_open_positions_and_exit_conditions():
             except Exception:
                 pass
 
-        # Fetch live current market price
-        current_price = entry_price
+        # Fetch live current market price from yfinance/finnhub
+        current_price = entry_price if entry_price > 0 else 0.0
         try:
             stock = yf.Ticker(yf_symbol)
             df = stock.history(period="5d", interval="5m")
             if not df.empty:
                 current_price = float(df['Close'].iloc[-1])
                 if yf_symbol.endswith(".L"): current_price /= 100.0
-                if entry_price <= 0: entry_price = current_price
 
-                if stop_price == 0.0 and entry_price > 0:
+                if stop_price == 0.0 and (entry_price > 0 or current_price > 0):
+                    base_p = entry_price if entry_price > 0 else current_price
                     df['TR'] = df[['High', 'Low', 'Close']].apply(
                         lambda x: max(x['High'] - x['Low'], abs(x['High'] - df['Close'].shift(1).loc[x.name]), abs(x['Low'] - df['Close'].shift(1).loc[x.name])), 
                         axis=1
                     )
                     atr14 = float(df['TR'].rolling(window=14).mean().iloc[-1])
-                    stop_price = entry_price - (1.5 * atr14)
-                    target_price = entry_price + (2.5 * (1.5 * atr14))
+                    stop_price = base_p - (1.5 * atr14)
+                    target_price = base_p + (2.5 * (1.5 * atr14))
         except Exception:
             pass
+
+        if entry_price <= 0:
+            entry_price = current_price
+
+        # Lock entry_price into SQLite database deterministically
+        if t212_ticker not in db_rows and entry_price > 0:
+            try:
+                now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                conn_lock = sqlite3.connect(DB_PATH, timeout=10)
+                cur_lock = conn_lock.cursor()
+                cur_lock.execute("PRAGMA journal_mode=WAL;")
+                cur_lock.execute("""
+                    INSERT OR REPLACE INTO trades 
+                    (ticker, yf_symbol, shares, entry_price, stop_price, target_price, opened_at, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN')
+                """, (t212_ticker, yf_symbol, shares, entry_price, stop_price, target_price, now_str))
+                conn_lock.commit()
+                conn_lock.close()
+                db_rows[t212_ticker] = (t212_ticker, yf_symbol, shares, entry_price, stop_price, target_price, now_str)
+            except Exception as e:
+                print(f"[DB LOCK ERROR] Could not commit {t212_ticker}: {e}")
 
         unrealized_pnl = (current_price - entry_price) * shares if entry_price > 0 else ppl
         pnl_pct = ((current_price - entry_price) / entry_price) * 100.0 if entry_price > 0 else 0.0
