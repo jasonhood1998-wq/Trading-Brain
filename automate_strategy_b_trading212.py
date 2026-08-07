@@ -1153,7 +1153,7 @@ def print_open_positions_and_exit_conditions():
             t212_ticker = pos.get("ticker") or (pos.get("instrument", {}).get("ticker") if isinstance(pos.get("instrument"), dict) else None) or pos.get("instrumentCode") or "UNKNOWN"
         
         shares = pos.get("quantity", 0.0) if isinstance(pos, dict) else 0.0
-        entry_price = pos.get("averagePrice") or pos.get("currentPrice") or 0.0 if isinstance(pos, dict) else 0.0
+        api_avg_price = pos.get("averagePrice") or pos.get("initialFillPrice") or pos.get("buyPrice") or 0.0 if isinstance(pos, dict) else 0.0
         ppl = pos.get("ppl", 0.0) if isinstance(pos, dict) else 0.0
 
         # Reverse lookup YF symbol
@@ -1163,19 +1163,23 @@ def print_open_positions_and_exit_conditions():
                 yf_symbol = yf_k
                 break
 
+        entry_price = api_avg_price
         stop_price = 0.0
         target_price = 0.0
         hours_open = 0.0
 
         if t212_ticker in db_rows:
-            _, _, _, entry_price, stop_price, target_price, opened_at_str = db_rows[t212_ticker]
+            _, _, _, db_entry, db_stop, db_target, opened_at_str = db_rows[t212_ticker]
+            if db_entry > 0: entry_price = db_entry
+            if db_stop > 0: stop_price = db_stop
+            if db_target > 0: target_price = db_target
             try:
                 opened_at_dt = datetime.datetime.strptime(opened_at_str, "%Y-%m-%d %H:%M:%S")
                 hours_open = (now_dt - opened_at_dt).total_seconds() / 3600.0
             except Exception:
                 pass
 
-        # If stop/target not in DB, calculate live via ATR(14)
+        # Fetch live current market price
         current_price = entry_price
         try:
             stock = yf.Ticker(yf_symbol)
@@ -1183,8 +1187,9 @@ def print_open_positions_and_exit_conditions():
             if not df.empty:
                 current_price = float(df['Close'].iloc[-1])
                 if yf_symbol.endswith(".L"): current_price /= 100.0
+                if entry_price <= 0: entry_price = current_price
 
-                if stop_price == 0.0:
+                if stop_price == 0.0 and entry_price > 0:
                     df['TR'] = df[['High', 'Low', 'Close']].apply(
                         lambda x: max(x['High'] - x['Low'], abs(x['High'] - df['Close'].shift(1).loc[x.name]), abs(x['Low'] - df['Close'].shift(1).loc[x.name])), 
                         axis=1
