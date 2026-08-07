@@ -1024,11 +1024,22 @@ def run_strategy_b_scan(watchlist: list, dry_run: bool = False):
     manage_open_position_exits(dry_run=dry_run)
 
     open_pos = fetch_open_positions()
-    active_tickers = [p.get("ticker") for p in open_pos]
+    active_tickers = [p.get("ticker") for p in open_pos if isinstance(p, dict)]
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT ticker FROM trades WHERE status IN ('OPEN', 'OPEN_MONEY_MARKET')")
+    db_active_tickers = [r[0] for r in cursor.fetchall()]
+    conn.close()
 
     for yf_symbol in scanned_watchlist:
         time.sleep(0.15)
         t212_ticker = resolve_t212_ticker(yf_symbol)
+        
+        # Max 1 Active Position Per Stock Guard: Skip if stock is already open in portfolio or DB
+        if t212_ticker in active_tickers or t212_ticker in db_active_tickers:
+            continue
+
         meta = METADATA_CACHE.get(t212_ticker, {"minTradeSize": 0.0001, "quantityPrecision": 4, "currencyCode": "USD"})
 
         # Region-Specific Macro Guard (US: SPY, UK: FTSE 100, Europe: Euro Stoxx 50)
