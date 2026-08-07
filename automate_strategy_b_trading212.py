@@ -1102,8 +1102,8 @@ def print_performance_stats():
 
 def print_open_positions_and_exit_conditions():
     """
-    Prints a formatted table of all currently open positions in the database 
-    and cross-checks live open positions from Trading 212 API.
+    Prints a formatted table of all active holdings from Trading 212 API and database,
+    calculating exact live Stop Loss (SL), Take Profit (TP), and Technical Exit triggers for each position.
     """
     init_database()
     conn = sqlite3.connect(DB_PATH)
@@ -1112,7 +1112,7 @@ def print_open_positions_and_exit_conditions():
         SELECT ticker, yf_symbol, shares, entry_price, stop_price, target_price, opened_at
         FROM trades WHERE status IN ('OPEN', 'OPEN_MONEY_MARKET')
     """)
-    rows = cursor.fetchall()
+    db_rows = {row[0]: row for row in cursor.fetchall()}
     conn.close()
 
     api_positions = fetch_open_positions()
@@ -1120,55 +1120,77 @@ def print_open_positions_and_exit_conditions():
     print("\n=======================================================================")
     print("[PORTFOLIO AUDIT] ACTIVE HOLDINGS & LIVE EXIT CONDITIONS")
     print("=======================================================================")
-    
-    if api_positions:
-        print(f"[*] Trading 212 API Live Positions: {len(api_positions)} Open Position(s) Found!")
-        for pos in api_positions:
-            t = "UNKNOWN"
-            if isinstance(pos, dict):
-                t = pos.get("ticker") or (pos.get("instrument", {}).get("ticker") if isinstance(pos.get("instrument"), dict) else None) or pos.get("instrumentCode") or "UNKNOWN"
-            q = pos.get("quantity", 0.0) if isinstance(pos, dict) else 0.0
-            p = pos.get("averagePrice") or pos.get("currentPrice") or 0.0 if isinstance(pos, dict) else 0.0
-            pnl = pos.get("ppl", 0.0) if isinstance(pos, dict) else 0.0
-            print(f"   -> API Holding: {t} | Shares: {q} | Avg Cost: ${p:.2f} | Live PnL: £{pnl:+.2f}")
 
-    if not rows and not api_positions:
+    if not api_positions and not db_rows:
         print("[*] No active open strategy positions in database or Trading 212 API.")
         print("=======================================================================\n")
         return
 
     now_dt = datetime.datetime.now()
-    for row in rows:
-        ticker, yf_symbol, shares, entry_price, stop_price, target_price, opened_at_str = row
+
+    for pos in api_positions:
+        t212_ticker = "UNKNOWN"
+        if isinstance(pos, dict):
+            t212_ticker = pos.get("ticker") or (pos.get("instrument", {}).get("ticker") if isinstance(pos.get("instrument"), dict) else None) or pos.get("instrumentCode") or "UNKNOWN"
         
+        shares = pos.get("quantity", 0.0) if isinstance(pos, dict) else 0.0
+        entry_price = pos.get("averagePrice") or pos.get("currentPrice") or 0.0 if isinstance(pos, dict) else 0.0
+        ppl = pos.get("ppl", 0.0) if isinstance(pos, dict) else 0.0
+
+        # Reverse lookup YF symbol
+        yf_symbol = t212_ticker.replace("_US_EQ", "").replace("_UK_EQ", ".L").replace("_DE_EQ", ".DE").replace("_FR_EQ", ".PA").replace("_NL_EQ", ".AS")
+        for yf_k, t212_v in YF_TO_T212_MAP.items():
+            if t212_v == t212_ticker:
+                yf_symbol = yf_k
+                break
+
+        stop_price = 0.0
+        target_price = 0.0
+        hours_open = 0.0
+
+        if t212_ticker in db_rows:
+            _, _, _, entry_price, stop_price, target_price, opened_at_str = db_rows[t212_ticker]
+            try:
+                opened_at_dt = datetime.datetime.strptime(opened_at_str, "%Y-%m-%d %H:%M:%S")
+                hours_open = (now_dt - opened_at_dt).total_seconds() / 3600.0
+            except Exception:
+                pass
+
+        # If stop/target not in DB, calculate live via ATR(14)
         current_price = entry_price
         try:
             stock = yf.Ticker(yf_symbol)
-            df = stock.history(period="1d")
+            df = stock.history(period="5d", interval="5m")
             if not df.empty:
                 current_price = float(df['Close'].iloc[-1])
                 if yf_symbol.endswith(".L"): current_price /= 100.0
+
+                if stop_price == 0.0:
+                    df['TR'] = df[['High', 'Low', 'Close']].apply(
+                        lambda x: max(x['High'] - x['Low'], abs(x['High'] - df['Close'].shift(1).loc[x.name]), abs(x['Low'] - df['Close'].shift(1).loc[x.name])), 
+                        axis=1
+                    )
+                    atr14 = float(df['TR'].rolling(window=14).mean().iloc[-1])
+                    stop_price = entry_price - (1.5 * atr14)
+                    target_price = entry_price + (2.5 * (1.5 * atr14))
         except Exception:
             pass
 
-        unrealized_pnl = (current_price - entry_price) * shares
+        unrealized_pnl = (current_price - entry_price) * shares if entry_price > 0 else ppl
         pnl_pct = ((current_price - entry_price) / entry_price) * 100.0 if entry_price > 0 else 0.0
 
-        hours_open = 0.0
-        try:
-            opened_at_dt = datetime.datetime.strptime(opened_at_str, "%Y-%m-%d %H:%M:%S")
-            hours_open = (now_dt - opened_at_dt).total_seconds() / 3600.0
-        except Exception:
-            pass
-
-        print(f"\n📌 POS: {ticker} ({yf_symbol}) | Shares: {shares}")
+        print(f"\n📌 POS: {t212_ticker} ({yf_symbol}) | Shares: {shares}")
         print(f"   --> Entry Price:    ${entry_price:.2f}")
-        print(f"   --> Current Price:  ${current_price:.2f} (Unrealized PnL: ${unrealized_pnl:+.2f} / {pnl_pct:+.2f}%)")
+        print(f"   --> Current Price:  ${current_price:.2f} (Unrealized PnL: £{ppl:+.2f} / {pnl_pct:+.2f}%)")
         print(f"   --> Stop Loss (SL): ${stop_price:.2f}  (Triggers SELL if Price <= ${stop_price:.2f})")
         print(f"   --> Take Profit(TP):${target_price:.2f} (Triggers SELL if Price >= ${target_price:.2f})")
-        print(f"   --> Time Elapsed:   {hours_open:.1f} Hours Open")
+        if hours_open > 0:
+            print(f"   --> Time Elapsed:   {hours_open:.1f} Hours Open")
         print(f"   --> Technical Exit: Triggers SELL if 20 EMA crosses below 50 SMA")
+
     print("\n=======================================================================\n")
+
+
 
 # -----------------------------------------------------------------------------
 # 11. Entrypoint & Daemon Loop
