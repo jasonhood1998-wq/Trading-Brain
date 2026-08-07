@@ -1307,6 +1307,18 @@ def print_open_positions_and_exit_conditions():
         conn_lock.commit()
         conn_lock.close()
 
+    # Step 3: Re-load manual_entries vault & DB rows so all calculated entries are available in memory
+    manual_entries = load_manual_entries()
+
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT ticker, yf_symbol, shares, entry_price, stop_price, target_price, opened_at
+        FROM trades WHERE status IN ('OPEN', 'OPEN_MONEY_MARKET')
+    """)
+    db_rows = {row[0]: row for row in cursor.fetchall()}
+    conn.close()
+
     print("\n=======================================================================")
     print("[PORTFOLIO AUDIT] ACTIVE HOLDINGS & LIVE EXIT CONDITIONS")
     print("=======================================================================")
