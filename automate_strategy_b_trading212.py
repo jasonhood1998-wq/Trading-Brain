@@ -1302,16 +1302,19 @@ def print_open_positions_and_exit_conditions():
             elif api_avg > 0:
                 entry_price = api_avg
                 source_tag = "Trading 212 Position Payload (averagePrice)"
+            elif t212_ticker in manual_entries and manual_entries[t212_ticker] > 0:
+                entry_price = manual_entries[t212_ticker]
+                source_tag = f"Bilateral Vault (manual_entries.json)"
+            elif t212_ticker in db_rows and db_rows[t212_ticker][3] > 0:
+                entry_price = db_rows[t212_ticker][3]
+                source_tag = f"Local SQLite Database (trading_brain.db)"
             else:
                 pure_stock_pnl_gbp = ppl - fx_ppl
                 fx_rate = get_fx_rate_to_gbp("USD")
-                if shares > 0 and fx_rate > 0 and current_price > 0:
+                if shares > 0 and fx_rate > 0 and current_price > 0 and pure_stock_pnl_gbp != 0:
                     skew_adj = pure_stock_pnl_gbp / (shares * fx_rate)
                     entry_price = round(current_price - skew_adj, 2)
                     source_tag = f"Zero-Skew PnL Formula (CurrentPrice={current_price}, PnL={pure_stock_pnl_gbp:.2f})"
-                elif t212_ticker in db_rows and db_rows[t212_ticker][3] > 0:
-                    entry_price = db_rows[t212_ticker][3]
-                    source_tag = "Local SQLite Database (trading_brain.db)"
                 else:
                     entry_price = current_price if current_price > 0 else 100.0
                     source_tag = "Current Price Fallback"
