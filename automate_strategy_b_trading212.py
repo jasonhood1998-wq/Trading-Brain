@@ -671,36 +671,46 @@ def fetch_account_summary(retries=3):
         time.sleep(1)
     return None
 
-def fetch_open_positions():
-    try:
-        res = requests.get(f"{BASE_URL}/equity/positions", headers=get_headers(), timeout=10)
-        if res.status_code == 200:
-            return res.json()
-        else:
-            print(f"[API WARN] /equity/positions returned HTTP {res.status_code}: {res.text[:100]}")
-    except Exception as e:
-        print(f"[API WARN] Failed to connect to Trading 212 API: {e}")
+def fetch_open_positions(retries=3):
+    for attempt in range(retries):
+        try:
+            res = requests.get(f"{BASE_URL}/equity/positions", headers=get_headers(), timeout=10)
+            if res.status_code == 200:
+                return res.json()
+            elif res.status_code == 429:
+                time.sleep(1.5 * (attempt + 1))
+            else:
+                print(f"[API WARN] /equity/positions returned HTTP {res.status_code}: {res.text[:100]}")
+        except Exception as e:
+            print(f"[API WARN] Failed to connect to Trading 212 API: {e}")
+        time.sleep(1.0)
     return []
 
-def fetch_order_history_fill_prices() -> dict:
+def fetch_order_history_fill_prices(retries=3) -> dict:
     """
     Queries Trading 212 API Order History endpoint (/equity/history/orders)
     to extract true executed fillPrice for all filled orders!
     """
     fill_prices = {}
-    try:
-        res = requests.get(f"{BASE_URL}/equity/history/orders?limit=50", headers=get_headers(), timeout=10)
-        if res.status_code == 200:
-            data = res.json()
-            items = data.get("items", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
-            for item in items:
-                if isinstance(item, dict):
-                    ticker = item.get("ticker") or item.get("instrumentCode")
-                    fill_p = item.get("fillPrice") or item.get("averagePrice") or item.get("price")
-                    if ticker and fill_p and float(fill_p) > 0:
-                        fill_prices[ticker] = float(fill_p)
-    except Exception:
-        pass
+    time.sleep(1.0)
+    for attempt in range(retries):
+        try:
+            res = requests.get(f"{BASE_URL}/equity/history/orders?limit=50", headers=get_headers(), timeout=10)
+            if res.status_code == 200:
+                data = res.json()
+                items = data.get("items", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
+                for item in items:
+                    if isinstance(item, dict):
+                        ticker = item.get("ticker") or item.get("instrumentCode")
+                        fill_p = item.get("fillPrice") or item.get("averagePrice") or item.get("price")
+                        if ticker and fill_p and float(fill_p) > 0:
+                            fill_prices[ticker] = float(fill_p)
+                break
+            elif res.status_code == 429:
+                time.sleep(1.5 * (attempt + 1))
+        except Exception:
+            pass
+        time.sleep(1.0)
     return fill_prices
 
 def place_market_order(ticker: str, quantity: float, dry_run: bool = False):
