@@ -1219,17 +1219,39 @@ def print_open_positions_and_exit_conditions():
 
             api_avg = pos.get("averagePrice") or pos.get("initialFillPrice") or pos.get("buyPrice") or 0.0
 
-            # PRIORITY CHAIN FOR ENTRY PRICE (NEVER USES CURRENT PRICE)
+            # Exact Mathematical Reverse Entry Price Formula: Entry = CurrentPrice * (1 - (ppl / value))
+            pos_val = pos.get("value", 0.0)
+            if api_avg <= 0 and pos_val > 0 and current_price > 0:
+                ratio = 1.0 - (ppl / pos_val)
+                calculated_entry = current_price * ratio
+                if calculated_entry > 0:
+                    api_avg = round(calculated_entry, 2)
+
+            # Check created timestamp from Trading 212 API
+            created_ts = pos.get("created") or pos.get("initialFillDate")
+            opened_at_str = now_str
+            if created_ts:
+                try:
+                    dt_parsed = datetime.datetime.fromisoformat(created_ts.replace("Z", "+00:00"))
+                    opened_at_str = dt_parsed.strftime("%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    pass
+
+            # PRIORITY CHAIN FOR ENTRY PRICE
             if t212_ticker in manual_entries:
                 entry_price = manual_entries[t212_ticker]
             elif t212_ticker in db_rows and db_rows[t212_ticker][3] > 0:
                 entry_price = db_rows[t212_ticker][3]
             elif api_avg > 0:
                 entry_price = api_avg
+                # Lock calculated entry into manual_entries vault permanently
+                save_manual_entry(t212_ticker, entry_price)
+                save_manual_entry(yf_symbol, entry_price)
             else:
-                entry_price = 0.0  # Explicitly 0.0 if un-set (NO FALLBACK TO CURRENT PRICE)
+                entry_price = 0.0
 
-            opened_at_str = db_rows[t212_ticker][6] if t212_ticker in db_rows else now_str
+            if t212_ticker in db_rows and db_rows[t212_ticker][6]:
+                opened_at_str = db_rows[t212_ticker][6]
 
             stop_price = 0.0
             target_price = 0.0
